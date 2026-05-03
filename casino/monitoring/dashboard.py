@@ -647,21 +647,23 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     border-radius: 0 !important;
     font-family: 'IBM Plex Sans Condensed', sans-serif !important;
     font-weight: 700 !important;
-    font-size: 10px !important;
-    letter-spacing: 0.12em !important;
+    font-size: 11px !important;
+    letter-spacing: 0.14em !important;
     text-transform: uppercase !important;
-    padding: 0 12px !important;
-    height: 34px !important;
-    min-height: 34px !important;
-    width: 100% !important;
+    padding: 11px 18px !important;
+    min-width: 168px !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    min-height: 0 !important;
     box-sizing: border-box !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    gap: 6px !important;
+    gap: 8px !important;
     white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
     line-height: 1 !important;
     transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
     box-shadow: none !important;
@@ -1038,18 +1040,18 @@ def _render_ops_bar(snap: DashboardSnapshot) -> None:  # pragma: no cover
         unsafe_allow_html=True,
     )
 
-    # Five equal-width button slots + one wide log slot.
-    # Equal ratios keep all buttons on the same grid regardless of label length.
-    cols = st.columns([1.4, 1.4, 1.4, 1.4, 1.4, 5])
+    # Buttons size themselves via CSS min-width: 168px (no container fill).
+    # Columns reserve uniform horizontal slots; remainder goes to the log strip.
+    cols = st.columns([1.6, 1.6, 1.6, 1.6, 1.6, 4.5])
 
     # Refresh — always safe.
     with cols[0]:
-        if st.button("↻ Refresh", key="op_refresh", use_container_width=True):
+        if st.button("↻ Refresh", key="op_refresh", use_container_width=False):
             st.rerun()
 
     # EOD reconcile — safe, writes one daily_pnl row.
     with cols[1]:
-        if st.button("▶ EOD Reconcile", key="op_eod", use_container_width=True):
+        if st.button("▶ EOD Reconcile", key="op_eod", use_container_width=False):
             from casino.jobs.reconcile_eod import (  # noqa: PLC0415
                 run_reconcile_eod,
             )
@@ -1074,7 +1076,7 @@ def _render_ops_bar(snap: DashboardSnapshot) -> None:  # pragma: no cover
         clicked = st.button(
             "▶ Earnings Daily",
             key="op_earn",
-            use_container_width=True,
+            use_container_width=False,
             help="Scores transcripts via Claude (real API spend) + submits Alpaca paper orders",
             disabled=snap.trading_disabled,
         )
@@ -1110,7 +1112,7 @@ def _render_ops_bar(snap: DashboardSnapshot) -> None:  # pragma: no cover
             if st.button(
                 "⊕ Re-enable",
                 key="op_reenable",
-                use_container_width=True,
+                use_container_width=False,
             ):
                 from casino.execution.risk import (  # noqa: PLC0415
                     re_enable_trading,
@@ -1122,7 +1124,7 @@ def _render_ops_bar(snap: DashboardSnapshot) -> None:  # pragma: no cover
                 st.session_state["confirm_kill"] = False
                 st.rerun()
         else:
-            if st.button("⊘ Kill switch", key="op_kill", use_container_width=True):
+            if st.button("⊘ Kill switch", key="op_kill", use_container_width=False):
                 st.session_state["confirm_kill"] = True
                 st.rerun()
 
@@ -1133,7 +1135,7 @@ def _render_ops_bar(snap: DashboardSnapshot) -> None:  # pragma: no cover
                 "⊘ Confirm fire",
                 key="op_kill_fire",
                 type="primary",
-                use_container_width=True,
+                use_container_width=False,
             )
             if confirm:
                 from casino.execution.risk import (  # noqa: PLC0415
@@ -1531,7 +1533,7 @@ def render(snapshot: DashboardSnapshot | None = None) -> None:  # pragma: no cov
     st.markdown("<div class='chart-frame'>", unsafe_allow_html=True)
     history = book.fetch_daily_pnl(limit=2000)
     fig = _render_equity_chart(history)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, use_container_width=False, config={"displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
 
     # --- Positions
