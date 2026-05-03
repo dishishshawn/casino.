@@ -598,6 +598,92 @@ a, a:visited { color: var(--accent); text-decoration: none; }
 }
 .metric-cell .sub .lo { color: var(--text-faint); }
 
+/* ============================================ ops bar (action buttons) */
+.ops-bar-frame {
+    margin: 1.4rem 1.6rem 0 1.6rem;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 0.6rem 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1.5rem;
+    align-items: center;
+}
+.ops-label {
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    font-weight: 700;
+    font-size: 9px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding-right: 0.8rem;
+    border-right: 1px solid var(--line);
+}
+.action-log {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 0.4rem 0.8rem;
+    background: var(--bg-elevated);
+    border-left: 2px solid var(--line-bright);
+    margin-left: 0.4rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.action-log .v-ok { color: var(--positive); margin-right: 0.4em; }
+.action-log .v-bad { color: var(--negative); margin-right: 0.4em; }
+
+/* Streamlit button override — sharp, dark, monospace */
+[data-testid="stButton"] > button,
+[data-testid="baseButton-secondary"],
+.stButton button {
+    background: var(--bg-elevated) !important;
+    color: var(--text) !important;
+    border: 1px solid var(--line-bright) !important;
+    border-radius: 0 !important;
+    font-family: 'IBM Plex Sans Condensed', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 10px !important;
+    letter-spacing: 0.18em !important;
+    text-transform: uppercase !important;
+    padding: 0.5rem 0.8rem !important;
+    height: 32px !important;
+    min-height: 32px !important;
+    line-height: 1 !important;
+    transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
+    box-shadow: none !important;
+}
+[data-testid="stButton"] > button:hover,
+.stButton button:hover {
+    background: #1c1c1c !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+[data-testid="stButton"] > button[kind="primary"],
+.stButton button[kind="primary"] {
+    background: #2c0f10 !important;
+    border-color: var(--negative) !important;
+    color: var(--negative) !important;
+}
+[data-testid="stButton"] > button[kind="primary"]:hover,
+.stButton button[kind="primary"]:hover {
+    background: #3a1213 !important;
+    color: #ff7b73 !important;
+}
+[data-testid="stButton"] > button:disabled,
+.stButton button:disabled {
+    opacity: 0.4 !important;
+    cursor: not-allowed !important;
+}
+
+/* spinner styling */
+[data-testid="stSpinner"] {
+    color: var(--accent) !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 11px !important;
+}
+
 /* ============================================ section heads */
 .section {
     margin: 2.2rem 1.6rem 0.6rem 1.6rem;
@@ -883,9 +969,157 @@ def _kill_banner_html() -> str:
         "<div class='kill-banner'>"
         "<span class='pulse'></span>"
         "Kill switch engaged · order entry disabled · "
-        "run python -m casino.execution.kill_switch --reenable to resume"
+        "click RE-ENABLE in the ops bar to resume"
         "</div>"
     )
+
+
+def _render_ops_bar(snap: DashboardSnapshot) -> None:  # pragma: no cover
+    """Action buttons for ops the operator otherwise runs from a shell.
+
+    All actions run in-process. Long jobs (earnings_daily, reconcile_eod)
+    block the page render — acceptable for a single-operator dashboard.
+    Destructive actions (kill switch) require two clicks (arm + fire).
+    """
+    import streamlit as st  # noqa: PLC0415 — render-only
+
+    # Initialize ops session_state defaults.
+    st.session_state.setdefault("confirm_kill", False)
+    st.session_state.setdefault("last_action", None)
+    st.session_state.setdefault("last_action_ok", True)
+
+    st.markdown(
+        "<div class='ops-bar-frame'><div class='ops-label'>Operations</div><div>",
+        unsafe_allow_html=True,
+    )
+
+    # Five button slots + one log slot. Tightened ratios so labels don't truncate.
+    cols = st.columns([1, 1.6, 1.7, 1.4, 1.4, 4])
+
+    # Refresh — always safe.
+    with cols[0]:
+        if st.button("↻ Refresh", key="op_refresh", use_container_width=True):
+            st.rerun()
+
+    # EOD reconcile — safe, writes one daily_pnl row.
+    with cols[1]:
+        if st.button("▶ EOD Reconcile", key="op_eod", use_container_width=True):
+            from casino.jobs.reconcile_eod import (  # noqa: PLC0415
+                run_reconcile_eod,
+            )
+
+            with st.spinner("running reconcile_eod..."):
+                try:
+                    eod = run_reconcile_eod()
+                    st.session_state["last_action"] = (
+                        f"reconcile_eod ok · "
+                        f"equity_close=${eod.equity_close} · "
+                        f"drift={eod.drift_alerts} · "
+                        f"dd={float(eod.drawdown) * 100:.2f}%"
+                    )
+                    st.session_state["last_action_ok"] = True
+                except Exception as e:  # noqa: BLE001
+                    st.session_state["last_action"] = f"reconcile_eod FAILED: {e}"
+                    st.session_state["last_action_ok"] = False
+            st.rerun()
+
+    # Earnings daily — REAL Anthropic API spend + REAL paper orders.
+    with cols[2]:
+        clicked = st.button(
+            "▶ Earnings Daily",
+            key="op_earn",
+            use_container_width=True,
+            help="Scores transcripts via Claude (real API spend) + submits Alpaca paper orders",
+            disabled=snap.trading_disabled,
+        )
+        if clicked:
+            from casino.jobs.earnings_daily import (  # noqa: PLC0415
+                run_earnings_daily,
+            )
+
+            with st.spinner("scoring transcripts + sizing orders... ~30-60s"):
+                try:
+                    earn = run_earnings_daily()
+                    if earn.skipped_reason:
+                        st.session_state["last_action"] = (
+                            f"earnings_daily skipped · {earn.skipped_reason}"
+                        )
+                    else:
+                        st.session_state["last_action"] = (
+                            f"earnings_daily ok · "
+                            f"candidates={earn.n_candidates} · "
+                            f"scored={earn.n_scored} · "
+                            f"L/S={earn.n_long}/{earn.n_short} · "
+                            f"submitted={earn.n_submitted}"
+                        )
+                    st.session_state["last_action_ok"] = True
+                except Exception as e:  # noqa: BLE001
+                    st.session_state["last_action"] = f"earnings_daily FAILED: {e}"
+                    st.session_state["last_action_ok"] = False
+            st.rerun()
+
+    # Kill switch / re-enable.
+    with cols[3]:
+        if snap.trading_disabled:
+            if st.button(
+                "⊕ Re-enable",
+                key="op_reenable",
+                use_container_width=True,
+            ):
+                from casino.execution.risk import (  # noqa: PLC0415
+                    re_enable_trading,
+                )
+
+                re_enable_trading()
+                st.session_state["last_action"] = "trading flag cleared · system armed"
+                st.session_state["last_action_ok"] = True
+                st.session_state["confirm_kill"] = False
+                st.rerun()
+        else:
+            if st.button("⊘ Kill switch", key="op_kill", use_container_width=True):
+                st.session_state["confirm_kill"] = True
+                st.rerun()
+
+    # Confirm kill — only visible while armed.
+    with cols[4]:
+        if st.session_state["confirm_kill"] and not snap.trading_disabled:
+            confirm = st.button(
+                "⊘ Confirm fire",
+                key="op_kill_fire",
+                type="primary",
+                use_container_width=True,
+            )
+            if confirm:
+                from casino.execution.risk import (  # noqa: PLC0415
+                    flatten_and_disable,
+                )
+
+                with st.spinner("flattening positions..."):
+                    try:
+                        ks = flatten_and_disable(reason="dashboard manual kill")
+                        st.session_state["last_action"] = (
+                            f"KILL ENGAGED · cancelled={ks.cancelled_orders} · "
+                            f"closed={ks.closed_positions} · flag_set={ks.flag_set}"
+                        )
+                        st.session_state["last_action_ok"] = True
+                    except Exception as e:  # noqa: BLE001
+                        st.session_state["last_action"] = f"kill switch FAILED: {e}"
+                        st.session_state["last_action_ok"] = False
+                st.session_state["confirm_kill"] = False
+                st.rerun()
+
+    # Last action log.
+    with cols[5]:
+        msg = st.session_state.get("last_action")
+        if msg:
+            cls = "v-ok" if st.session_state.get("last_action_ok") else "v-bad"
+            glyph = "✓" if st.session_state.get("last_action_ok") else "✗"
+            st.markdown(
+                f"<div class='action-log'><span class='{cls}'>{glyph}</span> {msg}</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def _metric_strip_html(snap: DashboardSnapshot) -> str:
@@ -1234,6 +1468,9 @@ def render(snapshot: DashboardSnapshot | None = None) -> None:  # pragma: no cov
 
     if snap.trading_disabled:
         st.markdown(_kill_banner_html(), unsafe_allow_html=True)
+
+    # Operations action bar — buttons for jobs the operator otherwise runs from a shell.
+    _render_ops_bar(snap)
 
     st.markdown(_metric_strip_html(snap), unsafe_allow_html=True)
 
