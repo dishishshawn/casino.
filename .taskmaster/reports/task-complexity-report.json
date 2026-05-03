@@ -1,0 +1,301 @@
+{
+	"meta": {
+		"generatedAt": "2026-05-03T05:32:42.472Z",
+		"tasksAnalyzed": 34,
+		"totalTasks": 34,
+		"analysisCount": 36,
+		"thresholdScore": 5,
+		"projectName": "casino",
+		"usedResearch": true
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "Initialize Python package with uv",
+			"complexityScore": 2,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Straightforward greenfield setup. Task involves running `uv init --lib`, adding dependencies to pyproject.toml, and configuring tool sections for ruff/mypy. The task details are explicit with exact dependency lists and config values. No existing code to integrate with. Single file (pyproject.toml) with well-documented uv patterns. Low complexity, no subtasks needed."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Create casino package structure",
+			"complexityScore": 2,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Purely mechanical directory/file creation task. The README provides the exact target structure. Creating ~25 empty __init__.py files and stub modules requires no logic, just following the specified layout. The notebook file is also empty. No integration complexity, no business logic, just filesystem scaffolding. Low complexity, no subtasks needed."
+		},
+		{
+			"taskId": 11,
+			"taskTitle": "Implement headline classification prompt",
+			"complexityScore": 4,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: 1) Implement classify_headline function with anonymization and system/user prompt templates, 2) Integrate with Anthropic Batch API for non-urgent processing with proper queueing, 3) Add unit tests for sentiment classification edge cases (positive/negative/neutral, high/low relevance, anonymization verification).",
+			"reasoning": "Medium complexity. Depends on completed LLM client (Task 8) and schemas (Task 9). Core function is a thin wrapper around AnthropicClient.generate_structured with template formatting. Batch API integration adds complexity for deferred processing. Anonymization logic reuses patterns from Task 10. Testing requires mocking LLM responses. Well-specified but requires careful prompt engineering and batch API coordination."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "Implement walk-forward cross-validation harness",
+			"complexityScore": 7,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break down into: 1) Implement temporal window splitting logic (train_months/test_months with rolling advancement, no lookahead), 2) Build parameter sweep runner per window that calls vectorbt and selects best config by Sharpe, 3) Implement point-in-time universe constituent filtering at each test period start, 4) Build aggregation logic for cross-window statistics (mean/std test Sharpe, degradation), 5) Add comprehensive tests for lookahead prevention, window overlap detection, and known-good walk-forward results.",
+			"reasoning": "High complexity. Critical for preventing overfitting - mistakes here silently kill the strategy. Requires deep integration with vectorbt harness (Task 15) and backtrader validation (Task 16). Must enforce strict temporal separation with no data leakage. Point-in-time universe filtering requires historical constituent data. Statistical aggregation across windows needs careful implementation. Core to the project's scientific validity."
+		},
+		{
+			"taskId": 27,
+			"taskTitle": "Implement Discord webhook alerts",
+			"complexityScore": 4,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: 1) Implement send_alert with Discord embed formatting (color-coded severity, mobile-optimized layout), 2) Build AlertManager class with rate limiting (10/hour sliding window) and graceful degradation when webhook URL missing, 3) Add integration tests with mocked webhook and test all alert trigger scenarios (fills, drawdown, LLM spend, reconciliation, exceptions, kill switch).",
+			"reasoning": "Medium complexity. Depends on dashboard (Task 26) for some trigger context. Discord webhook API is straightforward. Rate limiting requires tracking timestamps across calls. Multiple alert trigger scenarios need handling. Graceful degradation (log-only when no webhook) adds a fallback path. Well-specified format requirements. Exception traceback formatting needs care for readability on mobile."
+		},
+		{
+			"taskId": 30,
+			"taskTitle": "Create baseline PEAD research notebook",
+			"complexityScore": 5,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: 1) Data loading and SUE calculation cells with DuckDB queries for 2015-2023 S&P 500 earnings, 2) Quintile analysis visualization (returns by SUE quintile at 5/10/20 day horizons), 3) Vectorbt backtest execution with transaction costs and performance metrics computation, 4) Validation against academic literature with documentation of methodology and any deviations from expected Sharpe 0.6-0.8.",
+			"reasoning": "Medium-high complexity. Exploratory notebook but serves as critical validation checkpoint. Depends on vectorbt harness (Task 15) and Tiingo ingestion (Task 5). Requires significant financial domain knowledge to interpret results correctly. Must reproduce documented academic PEAD edge. Visualization and analysis interpretation matter for go/no-go decisions. Export to backtests/baseline_config.json creates downstream dependency."
+		},
+		{
+			"taskId": 28,
+			"taskTitle": "Create comprehensive signal and risk unit tests",
+			"complexityScore": 6,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Break down into: 1) SUE signal tests (known earnings beats/misses, insufficient history, industry fallback for IPOs), 2) Combined signal tests (sign agreement filter, normalization math, threshold filtering), 3) Risk management tests (Kelly sizing edge cases, exposure limit enforcement, stop-loss calculation), 4) Kill switch tests (state management, liquidation trigger, order prevention after activation). Target 90%+ coverage with parametrized test cases.",
+			"reasoning": "Medium-high complexity. Tests for financially-critical logic where bugs = money loss. Must cover edge cases in position sizing (Kelly with zero/extreme scores), exposure limits (boundary conditions), and kill switch (race conditions, state persistence). Requires comprehensive mock fixtures for broker/DB. Parametrized tests for multiple scenarios. 90%+ coverage target demands thorough path coverage. Depends on completed signal (Task 13) and risk (Task 21) implementations."
+		},
+		{
+			"taskId": 29,
+			"taskTitle": "Set up GitHub Actions CI pipeline",
+			"complexityScore": 4,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: 1) Create ci.yml with lint/format/type/test jobs using uv and Python 3.11, 2) Implement uv dependency caching with actions/cache for faster runs, 3) Add look-ahead gate job as critical release blocker with proper job dependencies and branch protection rule documentation.",
+			"reasoning": "Medium complexity. Standard GitHub Actions patterns but with uv-specific caching. Five jobs with dependencies between them. Look-ahead test as release gate requires proper job sequencing. Coverage threshold (80%) enforcement needs configuration. Badge and branch protection rules are documentation/config items. Well-documented CI patterns exist but uv caching requires specific setup."
+		},
+		{
+			"taskId": 31,
+			"taskTitle": "Document deployment and operations runbook",
+			"complexityScore": 3,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Low-medium complexity. Documentation task with no code. Requires operational knowledge but the task details provide complete specifications (cron schedules, systemd config, backup procedures). Depends on completed jobs (Task 25) for accurate entrypoints. Kill switch drill and incident response are procedural write-ups. No integration testing needed - it's documentation that will be validated manually during Phase 3."
+		},
+		{
+			"taskId": 33,
+			"taskTitle": "Run Phase 2 validation: SUE × LLM combined signal",
+			"complexityScore": 9,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Break down into: 1) Ingest transcripts for 2024-05-01+ and verify coverage for S&P 500 earnings events, 2) Implement Monte Carlo scoring (5 runs per transcript at temp=0.3) with variance tracking, 3) Run combined signal backtest in vectorbt and backtrader with comparison to Phase 1 baseline, 4) Execute walk-forward CV on 2024-2025 data with LLM call cost tracking, 5) Compute Deflated Sharpe accounting for all trials from both phases, 6) Generate phase2_validation_report.md with go/no-go recommendation for Phase 3. Ensure test_backtest_no_lookahead.py passes throughout.",
+			"reasoning": "Very high complexity. This is the critical validation milestone for the core strategy. Multiple integration points: combined signal (Task 13), walk-forward (Task 17), deflated Sharpe (Task 18), look-ahead tests (Task 19), Phase 1 baseline (Task 32). Monte Carlo over LLM calls adds stochasticity analysis. Cost analysis determines break-even account size. Must pass look-ahead gate throughout. Results determine whether project proceeds to paper trading. High stakes validation task."
+		},
+		{
+			"taskId": 1,
+			"taskTitle": "Initialize Python package with uv",
+			"complexityScore": 2,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Straightforward greenfield setup. Task involves running `uv init --lib`, adding dependencies to pyproject.toml, and configuring tool sections for ruff/mypy. The task details are explicit with exact dependency lists and config values. No existing code to integrate with. Single file (pyproject.toml) with well-documented uv patterns. Low complexity, no subtasks needed."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Create casino package structure",
+			"complexityScore": 2,
+			"recommendedSubtasks": 0,
+			"expansionPrompt": "",
+			"reasoning": "Purely mechanical directory/file creation task. The README provides the exact target structure. Creating ~25 empty __init__.py files and stub modules requires no logic, just following the specified layout. The notebook file is also empty. No integration complexity, no business logic, just filesystem scaffolding. Low complexity, no subtasks needed."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "Implement centralized configuration module",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement centralized configuration module.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "Implement DuckDB data store foundation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement duckdb data store foundation.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "Implement Tiingo data ingestion",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement tiingo data ingestion.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "Implement SEC EDGAR data ingestion",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement sec edgar data ingestion.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "Implement earnings transcript ingestion",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement earnings transcript ingestion.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "Implement LLM client with prompt caching and cost tracking",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement llm client with prompt caching and cost tracking.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "Define Pydantic schemas for LLM structured outputs",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on define pydantic schemas for llm structured outputs.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "Implement earnings transcript scoring prompt",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement earnings transcript scoring prompt.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "Implement baseline PEAD signal (SUE)",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement baseline pead signal (sue).",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 13,
+			"taskTitle": "Implement combined SUE × LLM signal",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement combined sue × llm signal.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "Implement market regime filter",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement market regime filter.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "Implement vectorbt research backtest harness",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement vectorbt research backtest harness.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "Implement backtrader event-driven validation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement backtrader event-driven validation.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "Implement Deflated Sharpe Ratio calculation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement deflated sharpe ratio calculation.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "Implement LLM look-ahead bias test gate",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement llm look-ahead bias test gate.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "Implement Alpaca broker wrapper",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement alpaca broker wrapper.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 21,
+			"taskTitle": "Implement risk management and kill switch",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement risk management and kill switch.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 22,
+			"taskTitle": "Implement broker reconciliation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement broker reconciliation.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 23,
+			"taskTitle": "Implement earnings daily cron job",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement earnings daily cron job.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 24,
+			"taskTitle": "Implement intraday news monitoring job",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement intraday news monitoring job.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 25,
+			"taskTitle": "Implement end-of-day reconciliation job",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement end-of-day reconciliation job.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 26,
+			"taskTitle": "Implement Streamlit monitoring dashboard",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on implement streamlit monitoring dashboard.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 32,
+			"taskTitle": "Run Phase 1 validation: baseline PEAD backtest",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on run phase 1 validation: baseline pead backtest.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		},
+		{
+			"taskId": 34,
+			"taskTitle": "Run Phase 3: 90-day paper trading validation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down this task with a focus on run phase 3: 90-day paper trading validation.",
+			"reasoning": "Automatically added due to missing analysis in AI response."
+		}
+	]
+}

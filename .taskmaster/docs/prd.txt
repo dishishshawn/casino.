@@ -1,0 +1,444 @@
+# Product Requirements Document — Casino
+
+**Project:** Casino — A Claude-Powered Retail Trading System
+**Owner:** Single developer (the author)
+**Status:** v1 design, pre-implementation
+**Last updated:** 2026-05-03
+
+---
+
+## 1. Overview
+
+Casino is a single-developer, narrow-scope retail trading system that combines classical quantitative infrastructure with Claude-powered natural-language signal generation. The v1 strategy is an **Earnings-Drift LLM Long-Short**: post-earnings-announcement drift (PEAD) augmented with Claude-scored earnings-call transcripts.
+
+This PRD describes what to build, in what order, and the invariants that any future agent or contributor must preserve. It is a build spec, not a sales document. The README (`README.md`) is the long-form rationale; this PRD is the executable plan.
+
+### 1.1 Why this exists
+
+Academic studies show ~1% of retail day traders are predictably profitable after fees. LLMs do not change that base rate. The only retail edges that survive are (a) narrow event-driven plays with LLM-parsed catalysts and (b) small structural edges in capacity-limited niches. Casino targets (a) explicitly. Everything in this document exists to maximize the chance of capturing that narrow edge while preventing the eight or nine well-documented ways retail traders blow up.
+
+### 1.2 Non-goals
+
+- A general-purpose trading framework. Casino is opinionated, narrow, and intentionally not extensible into asset classes or strategies it was not designed for.
+- A signal that can be copy-pasted to print money.
+- A tool for anyone uncomfortable with cross-sectional statistics, walk-forward CV, Deflated Sharpe, and realistic transaction-cost modeling.
+- A substitute for index investing for users without a clearly identified edge.
+
+### 1.3 Success criteria
+
+The project is successful if, by Day 90:
+
+1. The full v1 pipeline (ingest → signal → backtest → paper-trade → reconcile → monitor) runs unattended on a $5/mo VPS.
+2. A walk-forward backtest of the SUE × LLM signal, restricted to dates after the model's training cutoff, produces a **Deflated Sharpe Ratio > 0**.
+3. One full quarter of paper trading shows live results within 50% of backtest Sharpe.
+4. Monthly all-in operating cost is ≤ $80.
+5. The kill switch has been tested end-to-end and flattens all positions in under 60 seconds.
+
+The project is unsuccessful (and should be paused, not "iterated on") if any of:
+
+- Deflated Sharpe ≤ 0 after honest evaluation.
+- Live paper Sharpe diverges from backtest Sharpe by > 50%.
+- Monthly costs exceed 2% of expected monthly P&L.
+- Drawdown exceeds 35% in paper trading.
+
+---
+
+## 2. Users and Use Cases
+
+**Primary user:** the author, operating as a single-developer trader. Workflow is part-time: development happens in evenings and weekends, automated jobs run during market hours.
+
+**Primary use cases:**
+
+1. **Research mode.** Pull historical data, run a vectorbt sweep over signal parameters, identify candidate configurations.
+2. **Validation mode.** Take a candidate config, run a backtrader event-driven backtest with realistic costs and walk-forward CV, compute Deflated Sharpe.
+3. **Paper-trade mode.** Run the live signal pipeline against Alpaca paper account on a cron schedule.
+4. **Live mode (post Day 90 only).** Same as paper-trade but against a small real cash account.
+5. **Monitoring.** Glance at a Streamlit dashboard from phone or laptop; receive Discord alerts for fills, drawdowns, cost overruns, and exceptions.
+
+There is no second user. There is no multi-tenant story. There is no "team" feature.
+
+---
+
+## 3. Stack
+
+| Layer | Choice | Notes |
+|---|---|---|
+| Language | Python 3.11+ | Required for typing features and SDK support |
+| Package manager | `uv` | Use `uv add`, `uv sync`, `uv run`. Do not edit `pyproject.toml` by hand. |
+| Data store | DuckDB + Parquet | One DuckDB file at `data/casino.duckdb`; Parquet for raw archives |
+| Order/state store | SQLite | Single file `data/state.sqlite` |
+| Backtest (research) | `vectorbt` | Fast parameter sweeps |
+| Backtest (validation) | `backtrader` | Event-driven realism |
+| Broker | `alpaca-py` (paper for v1) | `ib_insync` deferred to a later phase |
+| LLM | Anthropic Claude SDK | Sonnet 4.6 default, Haiku 4.5 high-volume, Opus 4.7 rare |
+| Market data | Tiingo + SEC EDGAR + yfinance fallback | Tiingo Starter $10/mo |
+| Transcripts | Financial Modeling Prep (FMP) | Optional, $15/mo |
+| Scheduler | `cron` + `systemd` | Prefect deferred until clearly needed |
+| Logging | `loguru` + Discord webhook | One-line setup; mobile alerts |
+| Hosting | Hetzner VPS ($5/mo) | Mac mini also acceptable |
+| CI | GitHub Actions | `ruff` + `mypy` + `pytest` on every push |
+
+The on-disk repo is named `WALLACE/`; the Python package is `casino/`. Use `casino/` everywhere in code.
+
+---
+
+## 4. Architecture
+
+The system is a one-way data pipeline with controlled seams:
+
+```
+ingest (data/)  →  signals/  →  backtest/  ──┐
+                       │                     │
+                       └──→  llm/ (cached) ──┤
+                                             ├──→ execution/ → broker
+                                             │         │
+                       monitoring/  ←────────┘         └──→ reconcile (SQLite book)
+```
+
+### 4.1 Module boundaries (load-bearing)
+
+These are not aesthetic preferences. They are how the system stays correct.
+
+- **`data/store.py` is the only path to DuckDB/Parquet.** All other modules import helpers from it. This keeps point-in-time correctness enforceable in one place.
+- **`llm/client.py` is the only path to the Anthropic API.** It owns retries, prompt caching headers, the cost log, and the audit row written for the dashboard. Feature code calls typed wrappers in `llm/prompts/*`, never `anthropic.Anthropic()` directly.
+- **`signals/*` consume historical data and produce numeric scores.** They must be callable from both backtest and live paths with identical inputs producing identical outputs. No environment-dependent branching inside a signal.
+- **`backtest/` never imports from `execution/` and vice versa.** Crossing that line is how look-ahead bias and live/sim divergence creep in.
+- **`execution/risk.py` is authoritative for sizing, stops, and the kill switch.** Brokers and signals are *inputs* to risk; risk is not advisory.
+- **`execution/reconcile.py` is the source of truth for "what we actually hold."** Any module reasoning about positions reads from reconcile, not from the broker API directly and not from local order state alone.
+
+### 4.2 Repository layout (target)
+
+```
+casino/
+├── README.md
+├── CLAUDE.md
+├── pyproject.toml
+├── .env.example
+├── .github/workflows/ci.yml
+│
+├── casino/
+│   ├── __init__.py
+│   ├── config.py
+│   │
+│   ├── data/
+│   │   ├── ingest_edgar.py
+│   │   ├── ingest_tiingo.py
+│   │   ├── ingest_transcripts.py
+│   │   └── store.py
+│   │
+│   ├── llm/
+│   │   ├── client.py
+│   │   ├── prompts/
+│   │   │   ├── earnings_score.py
+│   │   │   ├── headline_class.py
+│   │   │   └── thesis_gen.py
+│   │   └── schemas.py
+│   │
+│   ├── signals/
+│   │   ├── pead.py
+│   │   ├── llm_earnings.py
+│   │   └── regime.py
+│   │
+│   ├── backtest/
+│   │   ├── vbt_research.py
+│   │   ├── bt_validate.py
+│   │   ├── walk_forward.py
+│   │   └── deflated_sharpe.py
+│   │
+│   ├── execution/
+│   │   ├── alpaca_broker.py
+│   │   ├── risk.py
+│   │   └── reconcile.py
+│   │
+│   ├── monitoring/
+│   │   ├── dashboard.py
+│   │   └── alerts.py
+│   │
+│   └── jobs/
+│       ├── earnings_daily.py
+│       ├── news_intraday.py
+│       └── reconcile_eod.py
+│
+├── notebooks/
+│   └── 01_pead_baseline.ipynb
+│
+└── tests/
+    ├── test_signals.py
+    ├── test_backtest_no_lookahead.py
+    └── test_risk.py
+```
+
+---
+
+## 5. v1 Strategy: Earnings-Drift LLM Long-Short
+
+### 5.1 Hypothesis
+
+Post-earnings-announcement drift (PEAD) is a documented anomaly worth roughly 5–8% annualized historically. LLM-parsed transcript sentiment materially improves the signal (Meursault et al. 2021; ExtractAlpha 2024). Combining standardized unexpected earnings (SUE) with Claude-scored transcript tone produces a higher-conviction signal than either alone.
+
+### 5.2 Universe
+
+- S&P 500 + Russell 1000 mid-caps.
+- Use **point-in-time** constituent membership. Do not join against today's index. Survivorship bias inflates backtests by 100–300 bps.
+- Exclude micro-caps (slippage kills the edge).
+
+### 5.3 Signal pipeline
+
+1. After every earnings release, fetch the 8-K and earnings-call transcript.
+2. Compute classical **SUE** = (actual EPS − consensus) / historical surprise std.
+3. Send transcript to Claude Sonnet 4.6 with cached system prompt. Request structured JSON validated by a Pydantic schema:
+   - `beat_quality`: −2 to +2 (was the beat clean or noisy?)
+   - `guidance_tone`: −2 to +2
+   - `qa_defensiveness`: −2 to +2
+   - `confidence`: 0 to 1
+   - `reasoning`: short free-text justification
+4. Combined score = `0.5 * normalized_SUE + 0.5 * llm_composite`.
+5. **Trade only when SUE and LLM score agree in sign** and both exceed configured thresholds.
+
+### 5.4 Position rules
+
+- Long top quintile, short bottom quintile (long-only fallback if shorting is impractical at the account size).
+- Equal-weighted; max 10 positions per side.
+- Hold 5–20 trading days; exit on signal decay or stop-loss.
+- Risk per name: 1% of NAV.
+- Total gross exposure: ≤ 100%.
+- Max single-name: 10% of NAV.
+
+### 5.5 Why this strategy first
+
+- Documented academic edge that survives out-of-sample.
+- LLM materially improves it (multiple 2024–2025 papers).
+- Low look-ahead bias risk if restricted to dates after the model's training cutoff.
+- Capacity-friendly for retail (no competing with Citadel here).
+- Earnings happen on a schedule, fits a part-time workflow.
+
+---
+
+## 6. LLM Discipline
+
+### 6.1 Hard rules for every LLM call
+
+1. **Prompt caching enabled** on the system prompt and any stable instruction block (`cache_control: {"type": "ephemeral"}`). Target ~90% input cost saving.
+2. **Structured output only.** Validated by a Pydantic schema in `casino/llm/schemas.py`. No free-text scoring is consumed by signal logic.
+3. **Audit logged.** Every call writes to a SQLite audit table: prompt hash, model, input/cached/output tokens, USD cost, latency, parsed score, and timestamp.
+4. **Default to Sonnet 4.6.** Use Haiku 4.5 for high-volume classification (e.g., headline filtering). Use Opus 4.7 only with explicit justification — it is rarely worth 5× the cost for trading NLP.
+5. **Batch API for non-latency-sensitive jobs** (50% saving). Real-time intraday calls do not use Batch.
+
+### 6.2 Look-ahead bias defenses (in order of importance)
+
+1. **Restrict backtest start to after the model's training cutoff.** This is the cleanest defense.
+2. **Anonymize entities in prompts.** Replace ticker and company name with `<COMPANY>`. Glasserman & Lin (2023) found anonymized headlines actually outperformed in some settings — the model's named-entity knowledge is a distraction more than a leak.
+3. **Use a chronologically frozen model** (ChronoBERT, ChronoGPT, or a local Llama snapshot) for serious backtest validation. Use Claude live for forward signal generation only.
+4. **Strict walk-forward** with no calendar-date leakage in prompts.
+5. **Monte Carlo over LLM stochasticity:** run each prompt 5–10× at temperature > 0; the variance is informative about signal robustness.
+6. **Apply Deflated Sharpe Ratio** (Bailey & Lopez de Prado): correct for the number of trials. Most retail backtests are noise after deflation.
+
+### 6.3 Release gate
+
+`tests/test_backtest_no_lookahead.py` asserts that the LLM is never called with a prompt containing a date inside the backtest window, and that all backtest-mode prompts are anonymized. **This test must remain green at all times.** Skipping, xfailing, or temporarily disabling it is forbidden without an explicit user instruction.
+
+---
+
+## 7. Cost Model
+
+Claude pricing (per million tokens, retail tier as of 2026):
+
+| Model | Input | Cached input | Output |
+|---|---|---|---|
+| Haiku 4.5 | $1 | $0.10 | $5 |
+| Sonnet 4.6 | $3 | $0.30 | $15 |
+| Opus 4.7 | $5 | $0.50 | $25 |
+
+Realistic monthly target for v1:
+
+| Item | Cost |
+|---|---|
+| Tiingo Starter | $10 |
+| Claude API (transcripts + headlines, with caching) | $30–50 |
+| Hetzner VPS | $5 |
+| FMP (optional) | $15 |
+| **Total** | **$60–80/month** |
+
+**Break-even math:** at $80/mo = $960/yr operating cost, a $10k account needs 9.6% gross return just to cover costs. Below ~$25k of deployed capital, expected value is negative. Below ~$10k, do not run paid services — use the free stack (yfinance, EDGAR, Alpaca free, Claude with hard $20/mo cap).
+
+---
+
+## 8. Risk Management Hard Rules
+
+These are non-negotiable invariants. They do not bend for "just this one experiment."
+
+1. Never risk more than **1.5% of account on a single trade**.
+2. Never run a strategy live without **3+ months of paper-trading and Deflated Sharpe > 0**.
+3. Never trade a strategy whose backtest overlaps the LLM's training cutoff **without entity anonymization**.
+4. **Always have a broker-side stop-loss.** Never rely solely on local code to exit.
+5. Treat any month where API + data spend exceeds **2% of expected monthly P&L** as a red flag. Downsize.
+6. **Fractional Kelly (¼ to ½) only.** Never full Kelly.
+7. **Cash account, not margin**, until 6+ months of profitable live history.
+8. **Wash sale tracking:** if trading more than 50 times/year, integrate TradeLog or GainsKeeper. The rule applies across all accounts including a spouse's IRA.
+9. **Kill switch:** a single command that flattens all positions and disables order entry. Test it. Re-test after any change to execution code.
+
+---
+
+## 9. Backtest Hygiene
+
+When working on `backtest/` or `signals/`, default to the most paranoid interpretation:
+
+- **Point-in-time** universe constituents. No survivorship bias.
+- **Realistic transaction costs.** Assume 5–10 bps round-trip on liquid US equities, 25–50 bps on small caps, 50–200 bps on options. A backtest that does not break under realistic costs is wrong, not good.
+- **Walk-forward** in `backtest/walk_forward.py`. Never report a single in-sample Sharpe as a result.
+- **Deflated Sharpe** in `backtest/deflated_sharpe.py`, accounting for all trials run during research. Most retail edges vanish here — that is the point.
+- **Temperature > 0 prompts run 5–10× per observation** for LLM-dependent signals; report variance, not just mean.
+
+---
+
+## 10. Conventions
+
+- **Money is `Decimal`**, not `float`, end-to-end through orders, fills, and the SQLite book. Floats are acceptable for research-only score computation in `signals/`.
+- **All times stored UTC.** Convert to America/New_York only at display boundaries (dashboard, alerts).
+- **Configuration centralizes in `casino/config.py`** which loads from `.env`. Do not read `os.environ` from feature modules.
+- **Notebooks are exploratory only.** Promote any logic worth keeping into `casino/` with tests. Never let a notebook become the source of truth for a signal or a backtest result.
+- **Logging via `loguru`** with a per-module logger. No `print()` in committed code.
+- **Type-checked via `mypy --strict`** at the package level.
+
+---
+
+## 11. Build Plan
+
+### Phase 1 — Foundation (Days 0–30)
+
+**Goal:** ingest data, baseline PEAD signal works without LLM, CI is green.
+
+Deliverables:
+
+1. `pyproject.toml` with `uv`-managed dependencies pinned to stack in §3.
+2. `.env.example` listing every required env var. Required vars:
+   - `ANTHROPIC_API_KEY`
+   - `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ALPACA_BASE_URL` (paper)
+   - `TIINGO_API_KEY`
+   - `FMP_API_KEY` (optional)
+   - `DISCORD_WEBHOOK_URL` (optional)
+3. `casino/config.py` loading from `.env` with typed accessors.
+4. `casino/data/store.py` — DuckDB connection helper, point-in-time query helpers, Parquet archive writer.
+5. `casino/data/ingest_tiingo.py` — OHLCV + fundamentals + news ingestion CLI (`python -m ...`).
+6. `casino/data/ingest_edgar.py` — SEC filings ingestion (8-K, 10-K, 10-Q, Form 4).
+7. `casino/signals/pead.py` — pure SUE-based PEAD computation.
+8. `casino/backtest/vbt_research.py` — vectorbt sweep over the baseline signal.
+9. `casino/backtest/walk_forward.py` — walk-forward harness.
+10. `casino/backtest/deflated_sharpe.py` — Bailey/Lopez de Prado deflation.
+11. `tests/test_signals.py` covering SUE math.
+12. `.github/workflows/ci.yml` running `ruff check`, `ruff format --check`, `mypy`, `pytest`.
+
+Exit criterion: vectorbt backtest of pure SUE PEAD reproduces the documented ~5–8% annualized historical edge on a clean point-in-time universe.
+
+### Phase 2 — Add the LLM (Days 31–60)
+
+**Goal:** the SUE × LLM combined signal is statistically significant after deflation.
+
+Deliverables:
+
+1. `casino/llm/client.py` — Anthropic client with prompt caching, retries, structured output parsing, cost logging to SQLite, latency capture.
+2. `casino/llm/schemas.py` — Pydantic schemas for every prompt's structured output. Include the v1 transcript-scoring schema described in §5.3.
+3. `casino/llm/prompts/earnings_score.py` — typed wrapper around the transcript-scoring prompt with anonymization.
+4. `casino/llm/prompts/headline_class.py` — Haiku-based classifier wrapper.
+5. `casino/data/ingest_transcripts.py` — FMP transcript ingestion CLI.
+6. `casino/signals/llm_earnings.py` — combine SUE × Claude transcript score per §5.3.
+7. `casino/backtest/bt_validate.py` — backtrader event-driven validation harness.
+8. `tests/test_backtest_no_lookahead.py` — release-gate test enforcing §6.3.
+9. Run combined-signal backtest restricted to dates after the model's training cutoff. Run walk-forward. Compute Deflated Sharpe.
+
+Exit criterion: Deflated Sharpe > 0 on the combined signal. **If not, do not proceed to Phase 3. Re-examine the hypothesis or pause the project.**
+
+### Phase 3 — Paper Trading & Operations (Days 61–90)
+
+**Goal:** unattended paper-trading on a VPS for one full earnings quarter, with monitoring and a tested kill switch.
+
+Deliverables:
+
+1. `casino/execution/alpaca_broker.py` — paper trading wrapper. Order submission, fill listening, position queries.
+2. `casino/execution/risk.py` — position sizing (fractional Kelly), per-trade and gross exposure caps, kill switch.
+3. `casino/execution/reconcile.py` — broker-vs-internal-book reconciliation; alert on drift.
+4. `casino/signals/regime.py` — simple market regime filter (e.g., SPY > 200-day MA gating).
+5. `casino/jobs/earnings_daily.py` — pre-close cron entry that scores today's reports and submits orders for tomorrow.
+6. `casino/jobs/news_intraday.py` — every-15-minute cron entry during market hours.
+7. `casino/jobs/reconcile_eod.py` — end-of-day cron entry; runs reconcile and writes daily P&L to the audit DB.
+8. `casino/monitoring/dashboard.py` — Streamlit dashboard with live P&L (today, MTD, YTD), open positions vs broker, last 50 LLM calls (model, tokens, cost, score, latency), daily LLM spend vs monthly budget, drawdown from high-water mark, rolling 60-day Sharpe.
+9. `casino/monitoring/alerts.py` — Discord webhook for: order fills, drawdown > 10%, daily LLM spend > $5, broker reconciliation mismatch, unhandled exceptions.
+10. `tests/test_risk.py` covering sizing rules and kill switch.
+11. End-to-end kill-switch drill: invoke from CLI, confirm all positions flatten and order entry is disabled.
+
+Exit criterion: one full quarter of paper trading where live results are within 50% of backtest Sharpe, and monthly costs are ≤ $80.
+
+### Phase 4 — Small Live Capital (Day 90+, conditional)
+
+Only enter Phase 4 if all Phase 3 exit criteria are met **and** the risk hard rules in §8 are satisfied. Initial deployment: $2,500–$5,000 in a cash account (not margin) for one quarter. Reassess scaling.
+
+---
+
+## 12. Triggers
+
+**Scale up** when all of:
+- 6 consecutive months of live performance within 30% of backtest, AND
+- Deflated Sharpe > 0.5, AND
+- Max drawdown < 25%.
+
+**Scale down or stop** when any of:
+- Drawdown > 35%.
+- Three consecutive losing months in a regime where the backtest predicted gains.
+- Live-vs-backtest divergence > 50% of expected Sharpe.
+
+These mean the edge is gone or never existed. Do not "let it work itself out."
+
+---
+
+## 13. Pitfalls Graveyard (do not relearn these)
+
+Ranked by how often they kill retail AI trading:
+
+1. **Ignoring slippage and commissions.** See §9 for required cost assumptions.
+2. **Overfitting / multiple testing.** See §6 and §9 — Deflated Sharpe is mandatory.
+3. **LLM look-ahead bias.** See §6.
+4. **Survivorship bias in the universe.** See §5.2.
+5. **Regime change.** Every 2010–2019 strategy broke 2020–2022. Every COVID strategy broke 2023. Every 2023 LLM strategy is decaying now. Build with the regime filter from day one.
+6. **Position-sizing errors.** Full Kelly with a noisy edge is ruin. Fractional Kelly only (§8).
+7. **Operational risk.** API downtime, exchange outages, VPS reboots mid-trade. Always have a kill switch and broker-side stops.
+8. **Sample-size lies.** Any "win rate" claimed on < 100 trades is meaningless. ~666+ trades for 99% confidence.
+9. **Course/Twitter grifters.** Real edges are not sold for $497. Ignore.
+
+---
+
+## 14. Out of Scope for v1
+
+These are explicitly deferred. Do not start them without a new PRD.
+
+- IBKR migration (`ib_insync`).
+- Options or futures trading.
+- Crypto (would require `freqtrade`-style infrastructure).
+- Multi-strategy portfolio allocation.
+- Web UI beyond the Streamlit dashboard.
+- Multi-user / team features.
+- Cloud-hosted (non-VPS) deployment.
+- Prefect or similar workflow orchestrator.
+- A general-purpose backtesting framework abstraction.
+
+---
+
+## 15. References
+
+**Books**
+- Lopez de Prado, *Advances in Financial Machine Learning* (2018) — required.
+- Ernie Chan, *Quantitative Trading* and *Algorithmic Trading* — required.
+- Lopez de Prado, *Machine Learning for Asset Managers* (2020) — strongly recommended.
+
+**Papers**
+- Barber, Lee, Liu & Odean — Taiwan day-trading base rates.
+- Bailey & Lopez de Prado, "The Deflated Sharpe Ratio."
+- Lopez-Lira & Tang (arXiv:2304.07619) — ChatGPT headline sentiment, decay analysis.
+- Glasserman & Lin (2023) — anonymization and LLM distraction effects.
+- Meursault et al. (2021), "PEAD.txt" — NLP on earnings transcripts improves PEAD.
+- Li et al. (arXiv:2505.07078, 2025) — honest evaluation of LLM trading agents long-run.
+
+**Open-source repos worth studying**
+- `TauricResearch/TradingAgents` — multi-agent inspiration.
+- `AI4Finance-Foundation/FinGPT` — local-LLM option for high-volume sentiment.
+- `QuantConnect/Lean` — production-grade structure.
+- `freqtrade/freqtrade` — crypto reference if scope expands.
