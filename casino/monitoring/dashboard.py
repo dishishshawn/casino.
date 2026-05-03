@@ -372,75 +372,943 @@ def build_snapshot(
 # ---------------------------------------------------------------------------- streamlit entry
 
 
-def render(snapshot: DashboardSnapshot | None = None) -> None:  # pragma: no cover
-    """Streamlit render layer. Pulled from `build_snapshot` if not supplied."""
-    import streamlit as st  # noqa: PLC0415 — only imported when running
+# ---------------------------------------------------------------------------- render helpers
+#
+# The render layer below is a heavily-customized Streamlit page. It injects raw
+# HTML + CSS so the page reads like a late-night trading desk: serif metric
+# numbers (Fraunces), data in JetBrains Mono with tabular numbers, a single
+# warm amber accent reserved for the brand mark, P&L green/red used only on
+# values, sharp 1px rules instead of card chrome. The data-prep layer above
+# is untouched — only `render` and its private helpers are visual.
 
-    st.set_page_config(page_title="casino dashboard", layout="wide")
-    st.title("casino — paper trading dashboard")
+
+_FONT_IMPORTS = (
+    "https://fonts.googleapis.com/css2?"
+    "family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,700;9..144,900&"
+    "family=JetBrains+Mono:wght@300;400;500;700&"
+    "family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&display=swap"
+)
+
+_CSS = """
+<style>
+@import url('%FONT_IMPORTS%');
+
+:root {
+    --bg-base:      #0a0a0a;
+    --bg-panel:     #111111;
+    --bg-elevated:  #151515;
+    --bg-row-hover: #181818;
+    --line:         #1f1f1f;
+    --line-bright:  #2a2a2a;
+    --line-rule:    #333333;
+    --text:         #e8e6e3;
+    --text-dim:     #888580;
+    --text-faint:   #555149;
+    --accent:       #e8a33d;
+    --accent-dim:   #8a6224;
+    --positive:     #3fb950;
+    --negative:     #f85149;
+    --warn:         #d29922;
+}
+
+html, body, [data-testid="stAppViewContainer"], .main, .block-container {
+    background: var(--bg-base) !important;
+    color: var(--text) !important;
+    font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+    font-feature-settings: "tnum" 1, "ss01" 1, "ss02" 1, "calt" 0;
+    font-variant-numeric: tabular-nums;
+}
+.block-container {
+    padding-top: 0 !important;
+    padding-bottom: 4rem !important;
+    max-width: 100% !important;
+}
+header[data-testid="stHeader"], footer { display: none !important; }
+[data-testid="stSidebar"] { display: none !important; }
+[data-testid="stToolbar"] { display: none !important; }
+
+#MainMenu, div[data-testid="stStatusWidget"] { display: none !important; }
+
+a, a:visited { color: var(--accent); text-decoration: none; }
+
+/* ============================================ ticker tape */
+.ticker-rail {
+    background: var(--bg-base);
+    border-top: 1px solid var(--line-bright);
+    border-bottom: 1px solid var(--line-bright);
+    overflow: hidden;
+    height: 28px;
+    position: relative;
+    width: 100%;
+}
+.ticker-track {
+    display: flex;
+    gap: 3rem;
+    white-space: nowrap;
+    animation: ticker-scroll 60s linear infinite;
+    padding-left: 100%;
+}
+@keyframes ticker-scroll {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+}
+.ticker-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 28px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+}
+.ticker-item .sym { color: var(--text); font-weight: 500; }
+.ticker-item .pl-pos { color: var(--positive); }
+.ticker-item .pl-neg { color: var(--negative); }
+.ticker-item .arrow { font-size: 9px; }
+
+/* ============================================ brand header */
+.brand-band {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    border-bottom: 1px solid var(--line-rule);
+    padding: 2.4rem 1.6rem 1.4rem 1.6rem;
+    margin-bottom: 0;
+}
+.brand-mark {
+    font-family: 'Fraunces', 'Times New Roman', serif;
+    font-weight: 900;
+    font-size: 64px;
+    line-height: 0.85;
+    letter-spacing: -0.04em;
+    color: var(--text);
+    margin: 0;
+    font-feature-settings: "ss01" 1;
+}
+.brand-mark .dot { color: var(--accent); }
+.brand-sub {
+    margin-top: 0.6rem;
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+}
+.brand-sub .sep { color: var(--text-faint); margin: 0 0.5rem; }
+
+.brand-meta {
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.7;
+}
+.brand-meta .label {
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    font-weight: 600;
+    font-size: 9px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    display: inline-block;
+    min-width: 7em;
+    text-align: left;
+    margin-right: 1.2em;
+}
+.brand-meta .v { color: var(--text); }
+.brand-meta .v-disabled { color: var(--negative); font-weight: 700; }
+.brand-meta .v-ok { color: var(--positive); }
+
+/* ============================================ kill-switch banner */
+.kill-banner {
+    background: linear-gradient(90deg, #2c0f10 0%, #1a0a0a 100%);
+    border: 1px solid var(--negative);
+    border-left-width: 4px;
+    padding: 0.9rem 1.4rem;
+    margin: 0 1.6rem 1.6rem 1.6rem;
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--negative);
+}
+.kill-banner .pulse {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--negative);
+    border-radius: 50%;
+    margin-right: 0.8em;
+    animation: pulse 1.4s ease-in-out infinite;
+    vertical-align: middle;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+}
+
+/* ============================================ metric strip */
+.metric-strip {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr;
+    gap: 0;
+    border-bottom: 1px solid var(--line-rule);
+    margin: 0 1.6rem;
+    padding: 0;
+}
+.metric-cell {
+    padding: 1.6rem 1.4rem 1.4rem 1.4rem;
+    border-right: 1px solid var(--line);
+    position: relative;
+}
+.metric-cell:last-child { border-right: none; }
+.metric-cell .lbl {
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    font-weight: 600;
+    font-size: 10px;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    display: block;
+    margin-bottom: 0.4rem;
+}
+.metric-cell .num {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 38px;
+    line-height: 1;
+    letter-spacing: -0.025em;
+    color: var(--text);
+    font-feature-settings: "tnum" 1, "ss01" 1;
+    font-variant-numeric: tabular-nums;
+}
+.metric-cell.lg .num { font-size: 48px; font-weight: 600; }
+.metric-cell .num.pos { color: var(--positive); }
+.metric-cell .num.neg { color: var(--negative); }
+.metric-cell .num.warn { color: var(--warn); }
+.metric-cell .sub {
+    margin-top: 0.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.02em;
+}
+.metric-cell .sub .lo { color: var(--text-faint); }
+
+/* ============================================ section heads */
+.section {
+    margin: 2.2rem 1.6rem 0.6rem 1.6rem;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2rem;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 0.4rem;
+}
+.section h2 {
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--text);
+    margin: 0;
+}
+.section h2 .num-tag {
+    color: var(--accent);
+    margin-right: 0.7em;
+    font-weight: 800;
+}
+.section .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: 0.06em;
+}
+
+/* ============================================ data table */
+.data {
+    margin: 0 1.6rem;
+    width: calc(100% - 3.2rem);
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+}
+.data th {
+    text-align: left;
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    font-weight: 600;
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    padding: 1rem 0.8rem 0.6rem 0.8rem;
+    border-bottom: 1px solid var(--line-bright);
+    white-space: nowrap;
+}
+.data th.r { text-align: right; }
+.data th.c { text-align: center; }
+.data td {
+    padding: 0.55rem 0.8rem;
+    border-bottom: 1px solid var(--line);
+    color: var(--text);
+    white-space: nowrap;
+    font-feature-settings: "tnum" 1;
+    font-variant-numeric: tabular-nums;
+}
+.data td.r { text-align: right; }
+.data td.c { text-align: center; }
+.data tr:hover td { background: var(--bg-row-hover); }
+.data td.dim { color: var(--text-dim); }
+.data td.faint { color: var(--text-faint); }
+.data td.pos { color: var(--positive); }
+.data td.neg { color: var(--negative); }
+.data td.warn { color: var(--warn); }
+.data td.sym { color: var(--text); font-weight: 500; letter-spacing: 0.02em; }
+.data td.side-long { color: var(--positive); }
+.data td.side-short { color: var(--negative); }
+.data td .sync-ok { color: var(--positive); }
+.data td .sync-bad { color: var(--negative); }
+.data td .leader {
+    color: var(--text-faint);
+    letter-spacing: 0;
+}
+.data .empty {
+    text-align: center;
+    color: var(--text-faint);
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    padding: 2rem 0.8rem !important;
+    font-size: 10px;
+}
+
+/* ============================================ split body */
+.split {
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 0;
+    margin-top: 0;
+}
+.split > div {
+    border-right: 1px solid var(--line);
+}
+.split > div:last-child { border-right: none; }
+
+/* ============================================ spend bar */
+.spend-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    margin: 0.8rem 1.6rem 0 1.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.spend-bar {
+    height: 4px;
+    background: var(--line);
+    border-radius: 0;
+    overflow: hidden;
+    position: relative;
+}
+.spend-bar .fill {
+    height: 100%;
+    background: var(--accent);
+}
+.spend-bar .fill.warn { background: var(--warn); }
+.spend-bar .fill.over { background: var(--negative); }
+.spend-row .pct { font-feature-settings: "tnum" 1; color: var(--text); }
+
+/* ============================================ chart container */
+.chart-frame {
+    margin: 0.6rem 1.6rem 0 1.6rem;
+    border: 1px solid var(--line);
+    background: var(--bg-panel);
+    padding: 0;
+}
+
+/* ============================================ status bar */
+.status {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg-base);
+    border-top: 1px solid var(--line-bright);
+    padding: 0.45rem 1.6rem;
+    display: flex;
+    justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: 0.04em;
+    z-index: 999;
+}
+.status .item .lbl {
+    font-family: 'IBM Plex Sans Condensed', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.24em;
+    color: var(--text-faint);
+    margin-right: 0.5em;
+}
+.status .item .v { color: var(--text-dim); }
+.status .item .v-ok { color: var(--positive); }
+.status .item .v-warn { color: var(--warn); }
+.status .item .v-bad { color: var(--negative); }
+.status .item + .item { margin-left: 2rem; }
+.dot-live {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin-right: 0.4em;
+    background: var(--positive);
+    box-shadow: 0 0 6px var(--positive);
+}
+.dot-live.bad { background: var(--negative); box-shadow: 0 0 6px var(--negative); }
+
+/* hide streamlit's default H1 + paddings if any leak */
+h1, h2, h3, h4 { font-family: 'Fraunces', serif !important; }
+</style>
+"""
+
+
+def _fmt_money(v: Decimal | float, *, signed: bool = False, decimals: int = 2) -> str:
+    """Format a money value with thousands separators and sign."""
+    d = v if isinstance(v, Decimal) else Decimal(str(v))
+    sign = ""
+    if signed:
+        if d > 0:
+            sign = "+"
+        elif d < 0:
+            sign = "−"
+            d = -d
+    elif d < 0:
+        sign = "−"
+        d = -d
+    quant = Decimal(10) ** -decimals
+    q = d.quantize(quant)
+    s = f"{q:,.{decimals}f}"
+    return f"{sign}${s}"
+
+
+def _fmt_pct(v: Decimal | float, *, decimals: int = 2, signed: bool = False) -> str:
+    f = float(v) * 100
+    if signed:
+        sign = "+" if f > 0 else ("−" if f < 0 else "")
+        return f"{sign}{abs(f):.{decimals}f}%"
+    return f"{f:.{decimals}f}%"
+
+
+def _pl_class(v: Decimal | float) -> str:
+    f = float(v)
+    if f > 0:
+        return "pos"
+    if f < 0:
+        return "neg"
+    return ""
+
+
+def _ticker_tape_html(positions: Sequence[PositionRow]) -> str:
+    """Build the looping ticker-tape header marquee."""
+    if not positions:
+        items_html = (
+            "<span class='ticker-item'><span class='sym'>NO POSITIONS</span>"
+            "<span>·</span><span>WAITING FOR NEXT EARNINGS BASKET</span></span>"
+        )
+    else:
+        parts: list[str] = []
+        for p in positions:
+            arrow = "▲" if p.side == "long" else "▼"
+            mark = _fmt_money(p.market_price, decimals=2) if p.market_price is not None else "—"
+            if p.unrealized_pl is not None and p.market_value is not None and p.market_value != 0:
+                pl_pct = float(p.unrealized_pl) / abs(float(p.market_value)) * 100
+                pl_cls = "pl-pos" if pl_pct >= 0 else "pl-neg"
+                pl_sign = "+" if pl_pct >= 0 else ""
+                pl_str = f"<span class='{pl_cls}'>{pl_sign}{pl_pct:.2f}%</span>"
+            else:
+                pl_str = "<span>—</span>"
+            parts.append(
+                f"<span class='ticker-item'>"
+                f"<span class='arrow'>{arrow}</span>"
+                f"<span class='sym'>{p.symbol}</span>"
+                f"<span>{mark}</span>"
+                f"{pl_str}"
+                f"</span>"
+            )
+        # duplicate so the loop is seamless
+        items_html = "".join(parts) * 2
+    return f"<div class='ticker-rail'><div class='ticker-track'>{items_html}</div></div>"
+
+
+def _brand_header_html(snap: DashboardSnapshot, *, broker_connected: bool) -> str:
+    """Top-of-page brand stamp + system meta."""
+    now_ny = datetime.now(tz=UTC).astimezone(_NY)
+    ts = now_ny.strftime("%a %b %d · %H:%M:%S %Z")
+    trading = (
+        "<span class='v-disabled'>DISABLED</span>"
+        if snap.trading_disabled
+        else "<span class='v-ok'>LIVE · PAPER</span>"
+    )
+    broker = (
+        "<span class='v-ok'>CONNECTED</span>"
+        if broker_connected
+        else "<span class='v'>OFFLINE · BOOK ONLY</span>"
+    )
+    return f"""
+    <div class='brand-band'>
+      <div>
+        <div class='brand-mark'>casino<span class='dot'>.</span></div>
+        <div class='brand-sub'>
+          Earnings-Drift LLM Long-Short
+          <span class='sep'>//</span> v1 paper account
+          <span class='sep'>//</span> Sonnet 4.6 + Haiku 4.5
+        </div>
+      </div>
+      <div class='brand-meta'>
+        <div><span class='label'>Session</span><span class='v'>{ts}</span></div>
+        <div><span class='label'>Trading</span>{trading}</div>
+        <div><span class='label'>Broker</span>{broker}</div>
+      </div>
+    </div>
+    """
+
+
+def _kill_banner_html() -> str:
+    return (
+        "<div class='kill-banner'>"
+        "<span class='pulse'></span>"
+        "Kill switch engaged · order entry disabled · "
+        "run python -m casino.execution.kill_switch --reenable to resume"
+        "</div>"
+    )
+
+
+def _metric_strip_html(snap: DashboardSnapshot) -> str:
+    """Five metric tiles across the top: NAV / Today / MTD / YTD / DD."""
+    today_cls = _pl_class(snap.pnl.today)
+    mtd_cls = _pl_class(snap.pnl.mtd)
+    ytd_cls = _pl_class(snap.pnl.ytd)
+    dd_pct = float(snap.pnl.drawdown)
+    dd_cls = "neg" if dd_pct >= 0.10 else ("warn" if dd_pct >= 0.05 else "")
+    sharpe = f"{snap.rolling_sharpe_60d:+.2f}" if snap.rolling_sharpe_60d is not None else "—"
+    return f"""
+    <div class='metric-strip'>
+      <div class='metric-cell lg'>
+        <span class='lbl'>Equity / NAV</span>
+        <div class='num'>{_fmt_money(snap.pnl.equity_today, decimals=2)}</div>
+        <div class='sub'>HWM <span class='lo'>·</span> {_fmt_money(snap.pnl.high_water_mark, decimals=0)}</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Today</span>
+        <div class='num {today_cls}'>{_fmt_money(snap.pnl.today, signed=True)}</div>
+        <div class='sub'>session P&amp;L</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Month to date</span>
+        <div class='num {mtd_cls}'>{_fmt_money(snap.pnl.mtd, signed=True)}</div>
+        <div class='sub'>since {datetime.now(tz=UTC).strftime("%b 01")}</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Year to date</span>
+        <div class='num {ytd_cls}'>{_fmt_money(snap.pnl.ytd, signed=True)}</div>
+        <div class='sub'>rolling 60d Sharpe <span class='lo'>·</span> {sharpe}</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Drawdown</span>
+        <div class='num {dd_cls}'>{_fmt_pct(snap.pnl.drawdown, decimals=2)}</div>
+        <div class='sub'>from high water mark</div>
+      </div>
+    </div>
+    """
+
+
+def _positions_table_html(rows: Sequence[PositionRow]) -> str:
+    """Render the positions table as raw HTML for full styling control."""
+    if not rows:
+        body = "<tr><td colspan='8' class='empty'>— no open positions —</td></tr>"
+    else:
+        trs: list[str] = []
+        for p in rows:
+            side_cls = "side-long" if p.side == "long" else "side-short"
+            arrow = "▲" if p.side == "long" else "▼"
+            mark = _fmt_money(p.market_price, decimals=2) if p.market_price is not None else "—"
+            mv = _fmt_money(p.market_value, decimals=0) if p.market_value is not None else "—"
+            if p.unrealized_pl is not None:
+                pl_cls = _pl_class(p.unrealized_pl)
+                pl_str = _fmt_money(p.unrealized_pl, signed=True, decimals=2)
+            else:
+                pl_cls = "faint"
+                pl_str = "—"
+            broker_qty = p.broker_qty if p.broker_qty is not None else "—"
+            sync_glyph = (
+                "<span class='sync-ok'>●</span>" if p.in_sync else "<span class='sync-bad'>◯</span>"
+            )
+            trs.append(
+                f"<tr>"
+                f"<td class='sym'>{p.symbol}</td>"
+                f"<td class='c {side_cls}'>{arrow} {p.side.upper()}</td>"
+                f"<td class='r'>{p.book_qty}</td>"
+                f"<td class='r dim'>{broker_qty}</td>"
+                f"<td class='r dim'>{_fmt_money(p.avg_entry_price, decimals=2)}</td>"
+                f"<td class='r'>{mark}</td>"
+                f"<td class='r dim'>{mv}</td>"
+                f"<td class='r {pl_cls}'>{pl_str}</td>"
+                f"<td class='c'>{sync_glyph}</td>"
+                f"</tr>"
+            )
+        body = "".join(trs)
+    return f"""
+    <table class='data'>
+      <thead><tr>
+        <th>Symbol</th>
+        <th class='c'>Side</th>
+        <th class='r'>Book qty</th>
+        <th class='r'>Brkr qty</th>
+        <th class='r'>Avg entry</th>
+        <th class='r'>Mark</th>
+        <th class='r'>Mkt val</th>
+        <th class='r'>Unreal P&amp;L</th>
+        <th class='c'>Sync</th>
+      </tr></thead>
+      <tbody>{body}</tbody>
+    </table>
+    """
+
+
+def _calls_table_html(rows: Sequence[LLMCallRow]) -> str:
+    """Render the LLM ledger as raw HTML."""
+    if not rows:
+        body = "<tr><td colspan='7' class='empty'>— no LLM calls yet —</td></tr>"
+    else:
+        trs: list[str] = []
+        for c in rows[:50]:
+            ok = (
+                "<span class='sync-ok'>●</span>" if c.success else "<span class='sync-bad'>◯</span>"
+            )
+            mode_cls = "warn" if c.mode == "backtest" else "dim"
+            short_model = c.model.replace("claude-", "").replace("-20251001", "")
+            cost_str = f"${c.cost_usd:.4f}"
+            cache_pct = (
+                int(c.cached_read_tokens / c.input_tokens * 100) if c.input_tokens > 0 else 0
+            )
+            trs.append(
+                f"<tr>"
+                f"<td class='c'>{ok}</td>"
+                f"<td class='dim'>{c.timestamp_local[5:19]}</td>"
+                f"<td class='sym'>{short_model}</td>"
+                f"<td class='c {mode_cls}'>{c.mode}</td>"
+                f"<td class='r'>{cost_str}</td>"
+                f"<td class='r dim'>{c.input_tokens:,}<span class='leader'>/</span>"
+                f"{cache_pct}%</td>"
+                f"<td class='r dim'>{c.output_tokens:,}</td>"
+                f"<td class='r faint'>{c.latency_ms} ms</td>"
+                f"</tr>"
+            )
+        body = "".join(trs)
+    return f"""
+    <table class='data'>
+      <thead><tr>
+        <th class='c'>OK</th>
+        <th>Time NY</th>
+        <th>Model</th>
+        <th class='c'>Mode</th>
+        <th class='r'>Cost</th>
+        <th class='r'>In tok / cache</th>
+        <th class='r'>Out tok</th>
+        <th class='r'>Latency</th>
+      </tr></thead>
+      <tbody>{body}</tbody>
+    </table>
+    """
+
+
+def _equity_drawdown_series(
+    history: Sequence[book.DailyPnLRow],
+) -> tuple[list[str], list[float], list[float]]:
+    """Build (dates_asc, equity, drawdown_pct) series from the daily P&L log.
+
+    `history` is most-recent first per `fetch_daily_pnl`; we reverse to render.
+    """
+    rev = list(reversed(history))
+    dates = [r.date for r in rev]
+    eq = [float(r.equity_close) for r in rev]
+    hwm = 0.0
+    dd: list[float] = []
+    for v in eq:
+        if v > hwm:
+            hwm = v
+        if hwm > 0:
+            dd.append((hwm - v) / hwm * 100.0)
+        else:
+            dd.append(0.0)
+    return dates, eq, dd
+
+
+def _render_equity_chart(history: Sequence[book.DailyPnLRow]) -> Any:
+    """Build a Plotly figure for the equity + drawdown chart."""
+    import plotly.graph_objects as go  # noqa: PLC0415 — render-only dep
+
+    dates, eq, dd = _equity_drawdown_series(history)
+    fig = go.Figure()
+    if not dates:
+        # Empty — keep the frame so the page composition holds.
+        fig.add_annotation(
+            text="— NO HISTORY —",
+            font=dict(family="IBM Plex Sans Condensed", size=14, color="#555149"),
+            showarrow=False,
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+        )
+    else:
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=eq,
+                mode="lines",
+                name="Equity",
+                line=dict(color="#e8a33d", width=1.6),
+                hovertemplate="%{x}<br>%{y:$,.0f}<extra></extra>",
+                yaxis="y",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=[-d for d in dd],
+                mode="lines",
+                name="Drawdown",
+                line=dict(color="#f85149", width=1.0, dash="dot"),
+                hovertemplate="%{x}<br>−%{customdata:.2f}%<extra></extra>",
+                customdata=dd,
+                yaxis="y2",
+                fill="tozeroy",
+                fillcolor="rgba(248,81,73,0.08)",
+            )
+        )
+    fig.update_layout(
+        height=300,
+        margin=dict(t=24, b=36, l=64, r=64),
+        paper_bgcolor="#111111",
+        plot_bgcolor="#111111",
+        showlegend=False,
+        font=dict(family="JetBrains Mono", size=10, color="#888580"),
+        hoverlabel=dict(
+            bgcolor="#0a0a0a",
+            bordercolor="#2a2a2a",
+            font=dict(family="JetBrains Mono", size=11, color="#e8e6e3"),
+        ),
+        xaxis=dict(
+            showgrid=False,
+            linecolor="#2a2a2a",
+            ticks="outside",
+            tickcolor="#2a2a2a",
+            tickfont=dict(size=9, color="#555149"),
+        ),
+        yaxis=dict(
+            title=dict(
+                text="EQUITY",
+                font=dict(
+                    family="IBM Plex Sans Condensed",
+                    size=9,
+                    color="#555149",
+                ),
+            ),
+            showgrid=True,
+            gridcolor="#1a1a1a",
+            linecolor="#2a2a2a",
+            tickfont=dict(size=9, color="#888580"),
+            tickprefix="$",
+            tickformat=",.0f",
+            zeroline=False,
+        ),
+        yaxis2=dict(
+            title=dict(
+                text="DRAWDOWN",
+                font=dict(
+                    family="IBM Plex Sans Condensed",
+                    size=9,
+                    color="#555149",
+                ),
+            ),
+            overlaying="y",
+            side="right",
+            showgrid=False,
+            linecolor="#2a2a2a",
+            tickfont=dict(size=9, color="#555149"),
+            ticksuffix="%",
+            zeroline=False,
+            range=[-max(dd) * 1.4 if dd else -1, 0],
+        ),
+    )
+    return fig
+
+
+def _spend_bar_html(monthly: Decimal, budget: Decimal) -> str:
+    pct_f = float(monthly / budget * 100) if budget > 0 else 0.0
+    pct_clamped = min(pct_f, 100.0)
+    cls = "fill"
+    if pct_f >= 100:
+        cls = "fill over"
+    elif pct_f >= 75:
+        cls = "fill warn"
+    return f"""
+    <div class='spend-row'>
+      <span><span class='label' style='font-family:"IBM Plex Sans Condensed";
+       font-weight:600;font-size:9px;letter-spacing:0.24em;text-transform:uppercase;
+       color:var(--text-faint);margin-right:1em;'>MTD spend</span>
+       <span class='pct'>{_fmt_money(monthly)}</span>
+       <span style='color:var(--text-faint);'> / {_fmt_money(budget)}</span></span>
+      <span class='spend-bar'>
+        <span class='{cls}' style='width:{pct_clamped}%'></span>
+      </span>
+      <span class='pct'>{pct_f:.1f}%</span>
+    </div>
+    """
+
+
+def _status_bar_html(snap: DashboardSnapshot, *, broker_connected: bool) -> str:
+    """Bottom fixed status bar."""
+    n_calls = len(snap.recent_calls)
+    n_pos = len(snap.positions)
+    out_of_sync = sum(1 for p in snap.positions if not p.in_sync)
+    sync_cls = "v-ok" if out_of_sync == 0 else "v-bad"
+    sync_label = "all reconciled" if out_of_sync == 0 else f"{out_of_sync} drift"
+    today = sum(
+        float(s) for _, s in snap.daily_spend if _ == datetime.now(tz=UTC).strftime("%Y-%m-%d")
+    )
+    today_spend_cls = "v-ok" if today < 5.0 else ("v-warn" if today < 10.0 else "v-bad")
+    dot = "dot-live" if broker_connected and not snap.trading_disabled else "dot-live bad"
+    return f"""
+    <div class='status'>
+      <div>
+        <span class='item'><span class='{dot}'></span>
+          <span class='lbl'>System</span>
+          <span class='v'>{"online" if broker_connected and not snap.trading_disabled else "degraded"}</span>
+        </span>
+        <span class='item'><span class='lbl'>Positions</span><span class='v'>{n_pos}</span></span>
+        <span class='item'><span class='lbl'>Reconcile</span><span class='{sync_cls}'>{sync_label}</span></span>
+        <span class='item'><span class='lbl'>LLM calls (50)</span><span class='v'>{n_calls}</span></span>
+        <span class='item'><span class='lbl'>Today LLM</span>
+          <span class='{today_spend_cls}'>${today:.2f}</span></span>
+      </div>
+      <div>
+        <span class='item'><span class='lbl'>Build</span><span class='v'>casino v0.1.0 / opus 4.7</span></span>
+      </div>
+    </div>
+    """
+
+
+def render(snapshot: DashboardSnapshot | None = None) -> None:  # pragma: no cover
+    """Streamlit render layer.
+
+    Editorial-financial dark UI: black canvas, single warm amber accent
+    reserved for the brand mark, Fraunces serif for headline numbers,
+    JetBrains Mono for tabular data, IBM Plex Sans Condensed for caps
+    section labels. Only `render` and the `_*_html` helpers above import
+    streamlit/plotly; the data-prep layer remains import-free of UI deps.
+    """
+    import streamlit as st  # noqa: PLC0415 — render-only
+
+    st.set_page_config(
+        page_title="casino · trading desk",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
 
     snap = snapshot if snapshot is not None else build_snapshot(broker=None)
+    broker_connected = False  # build_snapshot was called with broker=None
+
+    st.markdown(_CSS.replace("%FONT_IMPORTS%", _FONT_IMPORTS), unsafe_allow_html=True)
+    st.markdown(_ticker_tape_html(snap.positions), unsafe_allow_html=True)
+    st.markdown(
+        _brand_header_html(snap, broker_connected=broker_connected),
+        unsafe_allow_html=True,
+    )
 
     if snap.trading_disabled:
-        st.error("⚠ Trading is DISABLED (kill switch flag is set).")
+        st.markdown(_kill_banner_html(), unsafe_allow_html=True)
 
-    cols = st.columns(4)
-    cols[0].metric("Today P&L", f"${snap.pnl.today}")
-    cols[1].metric("MTD P&L", f"${snap.pnl.mtd}")
-    cols[2].metric("YTD P&L", f"${snap.pnl.ytd}")
-    cols[3].metric("Drawdown", f"{snap.pnl.drawdown:.2%}")
+    st.markdown(_metric_strip_html(snap), unsafe_allow_html=True)
 
-    st.subheader("Open positions vs broker")
-    st.dataframe(
-        [
-            {
-                "Symbol": p.symbol,
-                "Side": p.side,
-                "Book qty": p.book_qty,
-                "Broker qty": p.broker_qty,
-                "Avg entry": str(p.avg_entry_price),
-                "Mark": str(p.market_price) if p.market_price is not None else "",
-                "MV": str(p.market_value) if p.market_value is not None else "",
-                "Unrealized P&L": str(p.unrealized_pl) if p.unrealized_pl is not None else "",
-                "In sync": "✓" if p.in_sync else "✗",
-            }
-            for p in snap.positions
-        ]
+    # --- Equity + drawdown chart
+    st.markdown(
+        "<div class='section'>"
+        "<h2><span class='num-tag'>01</span>Equity curve · drawdown ribbon</h2>"
+        "<span class='meta'>daily close · all-time</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div class='chart-frame'>", unsafe_allow_html=True)
+    history = book.fetch_daily_pnl(limit=2000)
+    fig = _render_equity_chart(history)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # --- Positions
+    st.markdown(
+        "<div class='section'>"
+        "<h2><span class='num-tag'>02</span>Open positions · book vs broker</h2>"
+        f"<span class='meta'>{len(snap.positions)} open</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(_positions_table_html(snap.positions), unsafe_allow_html=True)
+
+    # --- LLM ledger
+    st.markdown(
+        "<div class='section'>"
+        "<h2><span class='num-tag'>03</span>LLM ledger · last 50 calls</h2>"
+        f"<span class='meta'>{len(snap.recent_calls)} of 50</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(_calls_table_html(snap.recent_calls), unsafe_allow_html=True)
+
+    # --- Spend
+    st.markdown(
+        "<div class='section'>"
+        "<h2><span class='num-tag'>04</span>API spend · monthly budget</h2>"
+        f"<span class='meta'>budget {_fmt_money(snap.monthly_budget)}/mo</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        _spend_bar_html(snap.monthly_spend, snap.monthly_budget),
+        unsafe_allow_html=True,
     )
 
-    st.subheader("Recent LLM calls")
-    st.dataframe(
-        [
-            {
-                "Time (NY)": c.timestamp_local,
-                "Model": c.model,
-                "Mode": c.mode,
-                "Cost ($)": f"{c.cost_usd:.4f}",
-                "In tok": c.input_tokens,
-                "Cache-read tok": c.cached_read_tokens,
-                "Out tok": c.output_tokens,
-                "Latency (ms)": c.latency_ms,
-                "OK": "✓" if c.success else "✗",
-                "Schema": c.schema_name or "",
-            }
-            for c in snap.recent_calls
-        ]
+    # --- Daily spend mini table
+    daily_rows = (
+        "".join(
+            f"<tr><td class='dim'>{d}</td><td class='r'>{_fmt_money(s, decimals=4)}</td></tr>"
+            for d, s in snap.daily_spend[:14]
+        )
+        or "<tr><td colspan='2' class='empty'>— no spend recorded —</td></tr>"
+    )
+    st.markdown(
+        f"""
+        <table class='data' style='margin-top:0.6rem;max-width:480px'>
+          <thead><tr>
+            <th>Date</th>
+            <th class='r'>Spend</th>
+          </tr></thead>
+          <tbody>{daily_rows}</tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.subheader("LLM spend")
-    cols = st.columns(2)
-    cols[0].metric(
-        "Month-to-date spend",
-        f"${snap.monthly_spend}",
-        f"of ${snap.monthly_budget} budget",
+    st.markdown(
+        _status_bar_html(snap, broker_connected=broker_connected),
+        unsafe_allow_html=True,
     )
-    if snap.rolling_sharpe_60d is not None:
-        cols[1].metric("Rolling 60-day Sharpe", f"{snap.rolling_sharpe_60d:.2f}")
-    else:
-        cols[1].metric("Rolling 60-day Sharpe", "n/a")
-
-    st.subheader("Daily spend")
-    st.dataframe([{"Date": d, "Spend ($)": float(s)} for d, s in snap.daily_spend])
 
 
 # Streamlit entry point: `streamlit run casino/monitoring/dashboard.py`

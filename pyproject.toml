@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.28.1",
     "loguru>=0.7.3",
     "lxml>=6.1.0",
+    "plotly>=6.7.0",
     "pyarrow>=24.0.0",
     "pydantic>=2.0",
     "pydantic-settings>=2.14.0",
@@ -54,7 +55,7 @@ no_implicit_optional = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["vectorbt.*", "duckdb.*", "backtrader.*"]
+module = ["vectorbt.*", "duckdb.*", "backtrader.*", "plotly.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
