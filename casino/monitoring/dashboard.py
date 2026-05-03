@@ -634,9 +634,12 @@ a, a:visited { color: var(--accent); text-decoration: none; }
 .action-log .v-ok { color: var(--positive); margin-right: 0.4em; }
 .action-log .v-bad { color: var(--negative); margin-right: 0.4em; }
 
-/* Streamlit button override — sharp, dark, monospace */
+/* Streamlit button override — sharp, dark, monospace.
+   Streamlit wraps button text in nested <div data-testid="stMarkdownContainer"><p>...</p></div>;
+   we reset margins on every nested element so the icon stays inline and labels never wrap. */
 [data-testid="stButton"] > button,
 [data-testid="baseButton-secondary"],
+[data-testid="baseButton-primary"],
 .stButton button {
     background: var(--bg-elevated) !important;
     color: var(--text) !important;
@@ -645,28 +648,65 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     font-family: 'IBM Plex Sans Condensed', sans-serif !important;
     font-weight: 700 !important;
     font-size: 10px !important;
-    letter-spacing: 0.18em !important;
+    letter-spacing: 0.12em !important;
     text-transform: uppercase !important;
-    padding: 0.5rem 0.8rem !important;
-    height: 32px !important;
-    min-height: 32px !important;
+    padding: 0 12px !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
     line-height: 1 !important;
     transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
     box-shadow: none !important;
+    vertical-align: middle !important;
+}
+/* Reset nested elements so the icon + text are flex children of the button */
+[data-testid="stButton"] > button > *,
+[data-testid="stButton"] > button p,
+[data-testid="stButton"] > button div,
+[data-testid="stButton"] > button span,
+.stButton button > *,
+.stButton button p,
+.stButton button div,
+.stButton button span {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+    font-family: inherit !important;
+    font-size: inherit !important;
+    font-weight: inherit !important;
+    letter-spacing: inherit !important;
+    text-transform: inherit !important;
+    color: inherit !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
 }
 [data-testid="stButton"] > button:hover,
+[data-testid="baseButton-secondary"]:hover,
+[data-testid="baseButton-primary"]:hover,
 .stButton button:hover {
     background: #1c1c1c !important;
     border-color: var(--accent) !important;
     color: var(--accent) !important;
 }
 [data-testid="stButton"] > button[kind="primary"],
+[data-testid="baseButton-primary"],
 .stButton button[kind="primary"] {
     background: #2c0f10 !important;
     border-color: var(--negative) !important;
     color: var(--negative) !important;
 }
 [data-testid="stButton"] > button[kind="primary"]:hover,
+[data-testid="baseButton-primary"]:hover,
 .stButton button[kind="primary"]:hover {
     background: #3a1213 !important;
     color: #ff7b73 !important;
@@ -675,6 +715,11 @@ a, a:visited { color: var(--accent); text-decoration: none; }
 .stButton button:disabled {
     opacity: 0.4 !important;
     cursor: not-allowed !important;
+}
+/* Fix vertical alignment of streamlit columns — they default to align-items: stretch
+   which sometimes pushes button rows down. Force baseline within the ops bar. */
+.ops-bar-frame [data-testid="stHorizontalBlock"] {
+    align-items: center !important;
 }
 
 /* spinner styling */
@@ -993,8 +1038,9 @@ def _render_ops_bar(snap: DashboardSnapshot) -> None:  # pragma: no cover
         unsafe_allow_html=True,
     )
 
-    # Five button slots + one log slot. Tightened ratios so labels don't truncate.
-    cols = st.columns([1, 1.6, 1.7, 1.4, 1.4, 4])
+    # Five equal-width button slots + one wide log slot.
+    # Equal ratios keep all buttons on the same grid regardless of label length.
+    cols = st.columns([1.4, 1.4, 1.4, 1.4, 1.4, 5])
 
     # Refresh — always safe.
     with cols[0]:
