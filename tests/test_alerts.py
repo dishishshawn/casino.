@@ -1,0 +1,131 @@
+"""Tests for casino.monitoring.alerts."""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Any
+
+import httpx
+import pytest
+
+from casino.config import get_config
+from casino.monitoring import alerts
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://example.invalid/webhook")
+    get_config.cache_clear()
+
+
+def _capture() -> tuple[list[tuple[str, dict[str, Any]]], alerts.WebhookTransport]:
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    def transport(url: str, payload: dict[str, Any]) -> httpx.Response:
+        captured.append((url, payload))
+        return httpx.Response(204)
+
+    return captured, transport
+
+
+def test_fire_sends_payload_when_url_configured() -> None:
+    captured, tx = _capture()
+    result = alerts.fire(
+        title="Hello",
+        message="World",
+        severity="info",
+        transport=tx,
+    )
+    assert result.sent is True
+    assert result.status_code == 204
+    assert len(captured) == 1
+    url, payload = captured[0]
+    assert url == "https://example.invalid/webhook"
+    assert payload["embeds"][0]["title"] == "Hello"
+
+
+def test_fire_no_url_logs_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    get_config.cache_clear()
+    captured, tx = _capture()
+    result = alerts.fire(title="x", message="y", severity="warning", transport=tx)
+    assert result.sent is False
+    assert "not configured" in result.reason
+    assert captured == []
+
+
+def test_alert_drawdown_breach_critical_at_threshold() -> None:
+    captured, tx = _capture()
+    result = alerts.alert_drawdown_breach(
+        drawdown_pct=0.10,
+        high_water_mark=Decimal("100000"),
+        current_equity=Decimal("90000"),
+        transport=tx,
+    )
+    assert result.sent is True
+    assert captured[0][1]["embeds"][0]["color"] == 0xE74C3C  # red / critical
+
+
+def test_alert_llm_spend_warns_when_over() -> None:
+    captured, tx = _capture()
+    alerts.alert_llm_spend(
+        daily_spend_usd=Decimal("6.00"),
+        threshold_usd=Decimal("5.00"),
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0xF1C40F  # warning / amber
+
+
+def test_alert_reconciliation_drift_critical() -> None:
+    captured, tx = _capture()
+    alerts.alert_reconciliation_drift(
+        n_drift=2,
+        summary="AAA broker_only; BBB qty_mismatch",
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0xE74C3C
+    assert "AAA broker_only" in embed["description"]
+
+
+def test_alert_unhandled_exception_critical() -> None:
+    captured, tx = _capture()
+    alerts.alert_unhandled_exception(
+        job="earnings_daily",
+        exc_type="RuntimeError",
+        detail="boom",
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0xE74C3C
+    assert "earnings_daily" in embed["title"]
+
+
+def test_alert_order_fill_info() -> None:
+    captured, tx = _capture()
+    alerts.alert_order_fill(
+        symbol="AAA",
+        side="buy",
+        qty=10,
+        price=Decimal("100.50"),
+        order_id="ord-1",
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0x2ECC71  # info / green
+    assert "AAA" in embed["title"]
+
+
+def test_alert_handles_transport_exception() -> None:
+    def boom(_url: str, _payload: dict[str, Any]) -> httpx.Response:
+        raise httpx.ConnectError("nope")
+
+    result = alerts.fire(
+        title="t",
+        message="m",
+        severity="critical",
+        transport=boom,
+    )
+    assert result.sent is False
+    assert "transport error" in result.reason

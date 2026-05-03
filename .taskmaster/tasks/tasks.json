@@ -781,7 +781,7 @@
         "dependencies": [
           "5"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -821,7 +821,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement market regime filter."
+        "expansionPrompt": "Break down this task with a focus on implement market regime filter.",
+        "updatedAt": "2026-05-03T16:24:39.682Z"
       },
       {
         "id": "15",
@@ -1137,7 +1138,7 @@
         "dependencies": [
           "3"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1177,7 +1178,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement alpaca broker wrapper."
+        "expansionPrompt": "Break down this task with a focus on implement alpaca broker wrapper.",
+        "updatedAt": "2026-05-03T16:24:46.261Z"
       },
       {
         "id": "21",
@@ -1189,7 +1191,7 @@
         "dependencies": [
           "20"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1229,7 +1231,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement risk management and kill switch."
+        "expansionPrompt": "Break down this task with a focus on implement risk management and kill switch.",
+        "updatedAt": "2026-05-03T16:26:16.913Z"
       },
       {
         "id": "22",
@@ -1241,7 +1244,7 @@
         "dependencies": [
           "21"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1281,7 +1284,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement broker reconciliation."
+        "expansionPrompt": "Break down this task with a focus on implement broker reconciliation.",
+        "updatedAt": "2026-05-03T16:26:24.544Z"
       },
       {
         "id": "23",
@@ -1295,7 +1299,7 @@
           "14",
           "22"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1335,7 +1339,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement earnings daily cron job."
+        "expansionPrompt": "Break down this task with a focus on implement earnings daily cron job.",
+        "updatedAt": "2026-05-03T16:39:13.510Z"
       },
       {
         "id": "24",
@@ -1348,7 +1353,7 @@
           "11",
           "22"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1388,7 +1393,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement intraday news monitoring job."
+        "expansionPrompt": "Break down this task with a focus on implement intraday news monitoring job.",
+        "updatedAt": "2026-05-03T16:39:21.532Z"
       },
       {
         "id": "25",
@@ -1401,7 +1407,7 @@
           "22",
           "14"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1441,7 +1447,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement end-of-day reconciliation job."
+        "expansionPrompt": "Break down this task with a focus on implement end-of-day reconciliation job.",
+        "updatedAt": "2026-05-03T16:39:29.614Z"
       },
       {
         "id": "26",
@@ -1453,7 +1460,7 @@
         "dependencies": [
           "25"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1492,7 +1499,8 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on implement streamlit monitoring dashboard."
+        "expansionPrompt": "Break down this task with a focus on implement streamlit monitoring dashboard.",
+        "updatedAt": "2026-05-03T16:42:41.181Z"
       },
       {
         "id": "27",
@@ -1504,7 +1512,7 @@
         "dependencies": [
           "26"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1544,7 +1552,8 @@
         ],
         "complexity": 4,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down into: 1) Implement send_alert with Discord embed formatting (color-coded severity, mobile-optimized layout), 2) Build AlertManager class with rate limiting (10/hour sliding window) and graceful degradation when webhook URL missing, 3) Add integration tests with mocked webhook and test all alert trigger scenarios (fills, drawdown, LLM spend, reconciliation, exceptions, kill switch)."
+        "expansionPrompt": "Break down into: 1) Implement send_alert with Discord embed formatting (color-coded severity, mobile-optimized layout), 2) Build AlertManager class with rate limiting (10/hour sliding window) and graceful degradation when webhook URL missing, 3) Add integration tests with mocked webhook and test all alert trigger scenarios (fills, drawdown, LLM spend, reconciliation, exceptions, kill switch).",
+        "updatedAt": "2026-05-03T16:42:48.118Z"
       },
       {
         "id": "28",
@@ -1557,7 +1566,7 @@
           "13",
           "21"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1606,7 +1615,8 @@
         ],
         "complexity": 6,
         "recommendedSubtasks": 4,
-        "expansionPrompt": "Break down into: 1) SUE signal tests (known earnings beats/misses, insufficient history, industry fallback for IPOs), 2) Combined signal tests (sign agreement filter, normalization math, threshold filtering), 3) Risk management tests (Kelly sizing edge cases, exposure limit enforcement, stop-loss calculation), 4) Kill switch tests (state management, liquidation trigger, order prevention after activation). Target 90%+ coverage with parametrized test cases."
+        "expansionPrompt": "Break down into: 1) SUE signal tests (known earnings beats/misses, insufficient history, industry fallback for IPOs), 2) Combined signal tests (sign agreement filter, normalization math, threshold filtering), 3) Risk management tests (Kelly sizing edge cases, exposure limit enforcement, stop-loss calculation), 4) Kill switch tests (state management, liquidation trigger, order prevention after activation). Target 90%+ coverage with parametrized test cases.",
+        "updatedAt": "2026-05-03T17:01:42.710Z"
       },
       {
         "id": "29",
@@ -1619,7 +1629,7 @@
           "28",
           "19"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1658,7 +1668,8 @@
         ],
         "complexity": 4,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down into: 1) Create ci.yml with lint/format/type/test jobs using uv and Python 3.11, 2) Implement uv dependency caching with actions/cache for faster runs, 3) Add look-ahead gate job as critical release blocker with proper job dependencies and branch protection rule documentation."
+        "expansionPrompt": "Break down into: 1) Create ci.yml with lint/format/type/test jobs using uv and Python 3.11, 2) Implement uv dependency caching with actions/cache for faster runs, 3) Add look-ahead gate job as critical release blocker with proper job dependencies and branch protection rule documentation.",
+        "updatedAt": "2026-05-03T17:05:32.385Z"
       },
       {
         "id": "30",
@@ -1741,7 +1752,7 @@
         "dependencies": [
           "25"
         ],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1804,7 +1815,8 @@
         ],
         "complexity": 3,
         "recommendedSubtasks": 0,
-        "expansionPrompt": ""
+        "expansionPrompt": "",
+        "updatedAt": "2026-05-03T17:05:39.097Z"
       },
       {
         "id": "32",
@@ -2007,9 +2019,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-03T07:12:41.761Z",
+      "lastModified": "2026-05-03T17:05:39.098Z",
       "taskCount": 34,
-      "completedCount": 19,
+      "completedCount": 31,
       "tags": [
         "master"
       ]
