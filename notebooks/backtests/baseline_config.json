@@ -1,0 +1,20 @@
+{
+  "phase": "phase_1_baseline_sue",
+  "best_params": {
+    "lookback_quarters": 4
+  },
+  "metrics": {
+    "sharpe": 0.736809488513823,
+    "sortino": 1.2475654390035775,
+    "max_drawdown": -0.0821849155890998,
+    "win_rate": 0.07936507936507936,
+    "total_return": 0.19896457786534572
+  },
+  "cost_bps": 7.5,
+  "data_source": "synthetic_fallback",
+  "literature_targets": {
+    "sharpe_low": 0.5,
+    "sharpe_high": 0.9,
+    "q5_minus_q1_pct_annual": "4-8"
+  }
+}
