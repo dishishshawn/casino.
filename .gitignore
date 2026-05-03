@@ -50,7 +50,9 @@ coverage.xml
 # =============================================================================
 # Casino runtime data — local, ungitable
 # =============================================================================
-data/
+# Anchor with leading slash so only the *top-level* runtime data dir is ignored;
+# without the slash this also matched the casino/data/ package source.
+/data/
 *.duckdb
 *.duckdb.wal
 *.sqlite

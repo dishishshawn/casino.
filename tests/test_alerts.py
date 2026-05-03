@@ -45,10 +45,21 @@ def test_fire_sends_payload_when_url_configured() -> None:
 
 
 def test_fire_no_url_logs_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Clear at the env layer AND override on the config object so a populated
+    # local .env can't satisfy the URL check. Otherwise dotenv re-supplies it.
     monkeypatch.delenv("DISCORD_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "")
     get_config.cache_clear()
     captured, tx = _capture()
-    result = alerts.fire(title="x", message="y", severity="warning", transport=tx)
+    # Pass an explicit empty webhook_url so the test does not depend on
+    # whether .env happens to be populated in the developer's working tree.
+    result = alerts.fire(
+        title="x",
+        message="y",
+        severity="warning",
+        transport=tx,
+        webhook_url="",
+    )
     assert result.sent is False
     assert "not configured" in result.reason
     assert captured == []

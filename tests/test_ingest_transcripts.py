@@ -107,6 +107,43 @@ def test_fetch_transcript_handles_404_as_empty(env: Path) -> None:
     assert fmp.fetch_transcript("AAPL") == []
 
 
+def test_fetch_transcript_handles_403_as_empty(env: Path) -> None:
+    """Plan-restricted endpoint must skip cleanly so basket loops finish."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="forbidden")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    fmp = FMPClient(
+        api_key="test",
+        client=client,
+        raw_dir=env.parent / "raw",
+        rate_limit_sec=0.0,
+    )
+    assert fmp.fetch_transcript("AAPL") == []
+
+
+def test_fetch_transcript_redacts_apikey_from_errors(env: Path) -> None:
+    """When httpx raises HTTPStatusError, the apikey must not appear in the message."""
+    secret = "REAL-SECRET-KEY-DO-NOT-LEAK"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(418, text="i'm a teapot")  # arbitrary non-handled status
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    fmp = FMPClient(
+        api_key=secret,
+        client=client,
+        raw_dir=env.parent / "raw",
+        rate_limit_sec=0.0,
+    )
+    with pytest.raises(httpx.HTTPStatusError) as excinfo:
+        fmp.fetch_transcript("AAPL")
+    msg = str(excinfo.value)
+    assert secret not in msg
+    assert "REDACTED" in msg or "apikey=" not in msg
+
+
 def test_fetch_transcript_retries_on_429(env: Path) -> None:
     state = {"n": 0}
 
