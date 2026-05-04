@@ -41,7 +41,10 @@ from casino.backtest import vbt_research
 from casino.data import store
 from casino.signals import pead
 
-_HOLDING_WINDOW_BDAYS = 5  # days each event's SUE persists in the score panel
+_HOLDING_WINDOW_BDAYS = 20  # Bernard-Thomas (1989) drift is a 60-day phenomenon;
+# 20-day hold captures ~1/3 of the integral while keeping turnover manageable.
+# Originally 5-day; bumped after 2026-05 research showed 5-day was capturing only
+# ~8% of the classical drift integral and arbitraged hardest by HFT.
 _DEFAULT_COST_BPS = 7.5
 
 
@@ -196,6 +199,7 @@ def run_baseline(
     start: datetime,
     end: datetime,
     cost_bps: float = _DEFAULT_COST_BPS,
+    holding_window: int = _HOLDING_WINDOW_BDAYS,
     db_path: Path | None = None,
     save_csv: bool = True,
 ) -> BaselineResult:
@@ -211,11 +215,11 @@ def run_baseline(
     quintile_means, q5q1 = _quintile_summary(sue_df)
 
     def _signal_func(_universe, _start, _end, **_kwargs):  # noqa: ANN001
-        return _sue_panel(sue_df, prices_wide)
+        return _sue_panel(sue_df, prices_wide, holding_window=holding_window)
 
     results, _csv = vbt_research.run_parameter_sweep(
         _signal_func,
-        param_grid={"holding_window": [_HOLDING_WINDOW_BDAYS]},
+        param_grid={"holding_window": [holding_window]},
         universe=list(prices_wide.columns),
         prices=prices_wide,
         start_date=prices_wide.index.min().to_pydatetime(),
@@ -310,6 +314,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--start", default=None, help="ISO start date (default: earliest in DB)")
     parser.add_argument("--end", default=None, help="ISO end date (default: latest in DB)")
     parser.add_argument("--cost-bps", type=float, default=_DEFAULT_COST_BPS)
+    parser.add_argument(
+        "--holding-window",
+        type=int,
+        default=_HOLDING_WINDOW_BDAYS,
+        help=f"Bdays each event's SUE persists in the score panel (default {_HOLDING_WINDOW_BDAYS}).",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON only")
     parser.add_argument("--no-save", action="store_true", help="Do not write sweep CSV")
     args = parser.parse_args(argv)
@@ -339,7 +349,13 @@ def main(argv: list[str] | None = None) -> int:
     if end.tzinfo is None:
         end = end.replace(tzinfo=UTC)
 
-    result = run_baseline(start=start, end=end, cost_bps=args.cost_bps, save_csv=not args.no_save)
+    result = run_baseline(
+        start=start,
+        end=end,
+        cost_bps=args.cost_bps,
+        holding_window=args.holding_window,
+        save_csv=not args.no_save,
+    )
 
     if args.json:
         print(json.dumps(asdict(result), indent=2))
