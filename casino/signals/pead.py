@@ -67,7 +67,7 @@ def get_earnings_surprises(
         sql = sql.format(as_of_clause="")
     params.append(lookback_quarters)
 
-    with store.get_duckdb_conn(db_path) as conn:
+    with store.get_duckdb_conn(db_path, read_only=True) as conn:
         df = conn.execute(sql, params).df()
 
     if df.empty:

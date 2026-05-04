@@ -77,7 +77,7 @@ def _load_data(
     db_path: Path | None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Pull earnings + close-price panel from DuckDB. Returns (earnings_df, prices_wide)."""
-    with store.get_duckdb_conn(db_path) as conn:
+    with store.get_duckdb_conn(db_path, read_only=True) as conn:
         earnings = conn.execute(
             """
             SELECT ticker, report_date, actual_eps, consensus_eps
@@ -326,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Default window = intersection of (earnings, ohlcv) ranges in DuckDB.
     if args.start is None or args.end is None:
-        with store.get_duckdb_conn() as conn:
+        with store.get_duckdb_conn(read_only=True) as conn:
             row = conn.execute(
                 "SELECT GREATEST(min_e, min_o), LEAST(max_e, max_o) FROM ("
                 "  SELECT min(report_date) AS min_e, max(report_date) AS max_e FROM earnings"
