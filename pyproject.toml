@@ -55,7 +55,7 @@ no_implicit_optional = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["vectorbt.*", "duckdb.*", "backtrader.*", "plotly.*"]
+module = ["vectorbt.*", "duckdb.*", "backtrader.*", "plotly.*", "yfinance.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

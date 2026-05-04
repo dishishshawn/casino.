@@ -59,6 +59,10 @@ coverage.xml
 *.sqlite-journal
 *.parquet
 
+# Backtest run artifacts (CSVs, JSON dumps) — regenerable; keep code under casino/backtest/.
+/backtests/results/
+/backtests/baseline_config.json
+
 # =============================================================================
 # Logs
 # =============================================================================
