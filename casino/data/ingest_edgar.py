@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from loguru import logger
@@ -38,7 +38,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _to_utc_midnight(d: date) -> datetime:
-    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+    return datetime(d.year, d.month, d.day, tzinfo=UTC)
 
 
 def ingest_for_ticker(
@@ -60,11 +60,15 @@ def ingest_for_ticker(
     try:
         cik = client.get_cik_from_ticker(ticker)
         meta = client.search_filings(
-            cik, form_types=forms, start_date=start_date, end_date=end_date,
+            cik,
+            form_types=forms,
+            start_date=start_date,
+            end_date=end_date,
         )
         if not meta:
-            logger.info("no filings for {} forms={} window={}..{}",
-                        ticker, forms, start_date, end_date)
+            logger.info(
+                "no filings for {} forms={} window={}..{}", ticker, forms, start_date, end_date
+            )
             return 0
 
         rows: list[dict[str, object]] = []

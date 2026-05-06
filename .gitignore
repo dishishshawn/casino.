@@ -63,6 +63,12 @@ coverage.xml
 /backtests/results/
 /backtests/baseline_config.json
 
+# Local-only ingest helpers (Windows OHLCV chunking; not part of the pipeline)
+/chunks/
+/run_chunks.ps1
+/run_earnings_chunks.ps1
+finbert_killtest_result.txt
+
 # =============================================================================
 # Logs
 # =============================================================================

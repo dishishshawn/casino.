@@ -29,6 +29,7 @@ import argparse
 import math
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -47,6 +48,8 @@ class _TickerLike(Protocol):
 
     @property
     def earnings_dates(self) -> Any: ...  # pandas DataFrame at runtime
+
+    def get_earnings_dates(self, limit: int = ...) -> Any: ...  # pandas DataFrame at runtime
 
     def history(self, **kwargs: Any) -> Any: ...  # pandas DataFrame at runtime
 
@@ -127,19 +130,34 @@ def fetch_earnings(
     ticker: str,
     *,
     factory: Any = _default_factory,
+    limit: int = 40,
 ) -> list[dict[str, object]]:
-    """Fetch earnings_dates for one ticker. Empty list on no data or fetch error."""
+    """Fetch earnings_dates for one ticker. Empty list on no data or fetch error.
+
+    The default `Ticker.earnings_dates` property only returns ~12 quarters; we use
+    `get_earnings_dates(limit=N)` to backfill ~10 years of EPS history needed for
+    SUE standardization. Falls back to the property if the method is unavailable.
+    """
     try:
         handle = factory(ticker)
     except Exception as exc:  # noqa: BLE001 — yfinance raises bare RuntimeError
         logger.warning("yfinance ticker construction failed for {}: {}", ticker, exc)
         return []
 
-    try:
-        df = handle.earnings_dates
-    except Exception as exc:  # noqa: BLE001 — Yahoo intermittently 404s on tickers
-        logger.warning("yfinance earnings_dates failed for {}: {}", ticker, exc)
-        return []
+    df = None
+    get_method = getattr(handle, "get_earnings_dates", None)
+    if callable(get_method):
+        try:
+            df = get_method(limit=limit)
+        except Exception as exc:  # noqa: BLE001 — Yahoo intermittently 404s on tickers
+            logger.warning("yfinance get_earnings_dates failed for {}: {}", ticker, exc)
+            df = None
+    if df is None or len(df) == 0:
+        try:
+            df = handle.earnings_dates
+        except Exception as exc:  # noqa: BLE001 — Yahoo intermittently 404s on tickers
+            logger.warning("yfinance earnings_dates failed for {}: {}", ticker, exc)
+            return []
 
     if df is None or len(df) == 0:
         return []
@@ -168,17 +186,38 @@ def ingest_tickers(
     factory: Any = _default_factory,
     db_path: Path | None = None,
     rate_limit_sec: float = _RATE_LIMIT_SEC,
+    workers: int = 1,
 ) -> dict[str, int]:
-    """Fetch earnings for each ticker and upsert. Returns {ticker: row_count}."""
+    """Fetch earnings for each ticker and upsert. Returns {ticker: row_count}.
+
+    With workers > 1, fetches are parallelized via a thread pool (network-bound)
+    while DB writes remain serialized (DuckDB Windows exclusive-lock constraint).
+    """
     store.create_schema(db_path=db_path)
     counts: dict[str, int] = {}
-    for i, t in enumerate(tickers):
-        if i > 0 and rate_limit_sec > 0:
-            time.sleep(rate_limit_sec)
-        rows = fetch_earnings(t, factory=factory)
-        n = upsert_earnings(rows, db_path=db_path) if rows else 0
-        counts[t.upper()] = n
-        logger.info("yfinance earnings {}: {} rows", t.upper(), n)
+
+    if workers <= 1:
+        for i, t in enumerate(tickers):
+            if i > 0 and rate_limit_sec > 0:
+                time.sleep(rate_limit_sec)
+            rows = fetch_earnings(t, factory=factory)
+            n = upsert_earnings(rows, db_path=db_path) if rows else 0
+            counts[t.upper()] = n
+            logger.info("yfinance earnings {}: {} rows", t.upper(), n)
+        return counts
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(fetch_earnings, t, factory=factory): t for t in tickers}
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                rows = fut.result()
+            except Exception as exc:  # noqa: BLE001 — yfinance may raise on bad ticker
+                logger.warning("yfinance earnings fetch failed for {}: {}", t, exc)
+                rows = []
+            n = upsert_earnings(rows, db_path=db_path) if rows else 0
+            counts[t.upper()] = n
+            logger.info("yfinance earnings {}: {} rows", t.upper(), n)
     return counts
 
 
@@ -272,17 +311,40 @@ def ingest_ohlcv(
     factory: Any = _default_factory,
     db_path: Path | None = None,
     rate_limit_sec: float = _RATE_LIMIT_SEC,
+    workers: int = 1,
 ) -> dict[str, int]:
-    """Fetch OHLCV for each ticker and upsert into the ohlcv table."""
+    """Fetch OHLCV for each ticker and upsert into the ohlcv table.
+
+    With workers > 1, fetches run in parallel while DB writes remain serialized
+    (DuckDB Windows exclusive-lock constraint).
+    """
     store.create_schema(db_path=db_path)
     counts: dict[str, int] = {}
-    for i, t in enumerate(tickers):
-        if i > 0 and rate_limit_sec > 0:
-            time.sleep(rate_limit_sec)
-        rows = fetch_ohlcv(t, start=start, end=end, factory=factory)
-        n = store.upsert_ohlcv(rows, db_path=db_path) if rows else 0
-        counts[t.upper()] = n
-        logger.info("yfinance ohlcv {}: {} bars", t.upper(), n)
+
+    if workers <= 1:
+        for i, t in enumerate(tickers):
+            if i > 0 and rate_limit_sec > 0:
+                time.sleep(rate_limit_sec)
+            rows = fetch_ohlcv(t, start=start, end=end, factory=factory)
+            n = store.upsert_ohlcv(rows, db_path=db_path) if rows else 0
+            counts[t.upper()] = n
+            logger.info("yfinance ohlcv {}: {} bars", t.upper(), n)
+        return counts
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {
+            ex.submit(fetch_ohlcv, t, start=start, end=end, factory=factory): t for t in tickers
+        }
+        for fut in as_completed(futures):
+            t = futures[fut]
+            try:
+                rows = fut.result()
+            except Exception as exc:  # noqa: BLE001 — yfinance may raise on bad ticker
+                logger.warning("yfinance ohlcv fetch failed for {}: {}", t, exc)
+                rows = []
+            n = store.upsert_ohlcv(rows, db_path=db_path) if rows else 0
+            counts[t.upper()] = n
+            logger.info("yfinance ohlcv {}: {} bars", t.upper(), n)
     return counts
 
 
@@ -324,6 +386,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="OHLCV end date YYYY-MM-DD (default: today).",
     )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Parallel fetch workers (default 1; try 8 for ~5x speedup on S&P 500).",
+    )
     return p
 
 
@@ -352,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
 
     summary: dict[str, int] = {}
     if args.mode in ("earnings", "both"):
-        e_counts = ingest_tickers(tickers, rate_limit_sec=args.rate_limit_sec)
+        e_counts = ingest_tickers(tickers, rate_limit_sec=args.rate_limit_sec, workers=args.workers)
         summary["earnings_rows"] = sum(e_counts.values())
     if args.mode in ("ohlcv", "both"):
         o_counts = ingest_ohlcv(
@@ -360,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
             start=args.ohlcv_start,
             end=args.ohlcv_end,
             rate_limit_sec=args.rate_limit_sec,
+            workers=args.workers,
         )
         summary["ohlcv_bars"] = sum(o_counts.values())
     logger.info("yfinance ingest summary: {} tickers, {}", len(tickers), summary)

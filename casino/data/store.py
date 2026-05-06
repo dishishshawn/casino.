@@ -100,6 +100,19 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS finbert_scores (
+        ticker        VARCHAR     NOT NULL,
+        event_date    TIMESTAMPTZ NOT NULL,
+        score_pos     DOUBLE,
+        score_neu     DOUBLE,
+        score_neg     DOUBLE,
+        score_net     DOUBLE,
+        n_chunks      INTEGER,
+        model_name    VARCHAR,
+        PRIMARY KEY (ticker, event_date)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS index_constituents (
         index_name VARCHAR     NOT NULL,
         ticker     VARCHAR     NOT NULL,
@@ -269,10 +282,7 @@ def upsert_fundamentals(
     with get_duckdb_conn(db_path) as conn:
         conn.executemany(
             sql,
-            [
-                (r["ticker"], r["report_date"], r["metric_name"], r.get("value"))
-                for r in rows
-            ],
+            [(r["ticker"], r["report_date"], r["metric_name"], r.get("value")) for r in rows],
         )
     return len(rows)
 
@@ -328,6 +338,58 @@ def upsert_filings(rows: list[dict[str, object]], *, db_path: Path | None = None
                     r.get("full_text"),
                     bool(r.get("has_item_202", False)),
                     r.get("raw_path"),
+                )
+                for r in rows
+            ],
+        )
+    return len(rows)
+
+
+def upsert_transcripts(rows: list[dict[str, object]], *, db_path: Path | None = None) -> int:
+    """Idempotently upsert earnings-transcript rows on (ticker, event_date)."""
+    if not rows:
+        return 0
+    sql = """
+        INSERT OR REPLACE INTO transcripts (ticker, event_date, transcript_text, source)
+        VALUES (?, ?, ?, ?)
+    """
+    with get_duckdb_conn(db_path) as conn:
+        conn.executemany(
+            sql,
+            [
+                (r["ticker"], r["event_date"], r.get("transcript_text"), r.get("source"))
+                for r in rows
+            ],
+        )
+    return len(rows)
+
+
+def upsert_finbert_scores(
+    rows: list[dict[str, object]],
+    *,
+    db_path: Path | None = None,
+) -> int:
+    """Idempotently upsert FinBERT score rows on (ticker, event_date)."""
+    if not rows:
+        return 0
+    sql = """
+        INSERT OR REPLACE INTO finbert_scores
+            (ticker, event_date, score_pos, score_neu, score_neg, score_net, n_chunks, model_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    with get_duckdb_conn(db_path) as conn:
+        conn.executemany(
+            sql,
+            [
+                (
+                    r["ticker"],
+                    r["event_date"],
+                    r.get("score_pos"),
+                    r.get("score_neu"),
+                    r.get("score_neg"),
+                    r.get("score_net"),
+                    r.get("n_chunks"),
+                    r.get("model_name"),
                 )
                 for r in rows
             ],

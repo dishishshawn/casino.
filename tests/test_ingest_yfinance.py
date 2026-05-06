@@ -273,8 +273,12 @@ def test_fetch_ohlcv_returns_rows_for_populated_history() -> None:
                 _FakeTimestamp(datetime(2024, 6, 3, tzinfo=UTC)),
                 _FakeRow(
                     {
-                        "Open": 100.0, "High": 101.0, "Low": 99.0,
-                        "Close": 100.5, "Volume": 1_000_000, "Adj Close": 100.5,
+                        "Open": 100.0,
+                        "High": 101.0,
+                        "Low": 99.0,
+                        "Close": 100.5,
+                        "Volume": 1_000_000,
+                        "Adj Close": 100.5,
                     }
                 ),
             ),
@@ -282,8 +286,12 @@ def test_fetch_ohlcv_returns_rows_for_populated_history() -> None:
                 _FakeTimestamp(datetime(2024, 6, 4, tzinfo=UTC)),
                 _FakeRow(
                     {
-                        "Open": 100.5, "High": 102.0, "Low": 100.0,
-                        "Close": 101.5, "Volume": 900_000, "Adj Close": 101.5,
+                        "Open": 100.5,
+                        "High": 102.0,
+                        "Low": 100.0,
+                        "Close": 101.5,
+                        "Volume": 900_000,
+                        "Adj Close": 101.5,
                     }
                 ),
             ),
@@ -322,8 +330,12 @@ def test_ingest_ohlcv_round_trip(env: Path) -> None:
                 _FakeTimestamp(datetime(2024, 6, 3, tzinfo=UTC)),
                 _FakeRow(
                     {
-                        "Open": 100.0, "High": 101.0, "Low": 99.0,
-                        "Close": 100.5, "Volume": 1_000, "Adj Close": 100.5,
+                        "Open": 100.0,
+                        "High": 101.0,
+                        "Low": 99.0,
+                        "Close": 100.5,
+                        "Volume": 1_000,
+                        "Adj Close": 100.5,
                     }
                 ),
             ),
@@ -342,9 +354,7 @@ def test_ingest_ohlcv_round_trip(env: Path) -> None:
     assert counts == {"AAPL": 1, "MSFT": 1}
 
     with store.get_duckdb_conn(env) as conn:
-        out = conn.execute(
-            "SELECT ticker, close, volume FROM ohlcv ORDER BY ticker"
-        ).fetchall()
+        out = conn.execute("SELECT ticker, close, volume FROM ohlcv ORDER BY ticker").fetchall()
     assert out == [("AAPL", 100.5, 1000), ("MSFT", 100.5, 1000)]
 
     # Re-ingesting the same bar must dedupe via INSERT OR REPLACE on (ticker, ts).

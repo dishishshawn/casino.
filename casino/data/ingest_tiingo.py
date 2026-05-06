@@ -18,7 +18,7 @@ import json
 import sys
 import time
 from collections.abc import Mapping
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -44,8 +44,8 @@ def _parse_iso_to_utc(s: str) -> datetime:
         s = s[:-1] + "+00:00"
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 class TiingoClient:
@@ -90,20 +90,34 @@ class TiingoClient:
             except httpx.RequestError as e:
                 last_exc = e
                 wait = _BACKOFF_BASE_SEC * (2**attempt)
-                logger.warning("tiingo request error {} (attempt {}/{}): retry in {}s",
-                               e, attempt + 1, _MAX_RETRIES, wait)
+                logger.warning(
+                    "tiingo request error {} (attempt {}/{}): retry in {}s",
+                    e,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    wait,
+                )
                 time.sleep(wait)
                 continue
             if resp.status_code == 429:
                 wait = _BACKOFF_BASE_SEC * (2**attempt)
-                logger.warning("tiingo 429 rate-limited (attempt {}/{}); sleep {}s",
-                               attempt + 1, _MAX_RETRIES, wait)
+                logger.warning(
+                    "tiingo 429 rate-limited (attempt {}/{}); sleep {}s",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    wait,
+                )
                 time.sleep(wait)
                 continue
             if 500 <= resp.status_code < 600:
                 wait = _BACKOFF_BASE_SEC * (2**attempt)
-                logger.warning("tiingo 5xx={} (attempt {}/{}); sleep {}s",
-                               resp.status_code, attempt + 1, _MAX_RETRIES, wait)
+                logger.warning(
+                    "tiingo 5xx={} (attempt {}/{}); sleep {}s",
+                    resp.status_code,
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    wait,
+                )
                 time.sleep(wait)
                 continue
             resp.raise_for_status()

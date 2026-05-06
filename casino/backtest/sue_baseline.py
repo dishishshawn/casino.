@@ -30,7 +30,6 @@ import json
 import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
@@ -103,27 +102,31 @@ def _load_data(
 
 
 def _compute_all_sue(earnings: pd.DataFrame, *, db_path: Path | None) -> pd.DataFrame:
-    """Apply pead.compute_sue per row. Returns earnings + sue column, rows with NaN dropped."""
-    sues: list[float | None] = []
-    for r in earnings.itertuples():
-        rd = r.report_date
-        if hasattr(rd, "to_pydatetime"):
-            rd_py = rd.to_pydatetime()
-        elif isinstance(rd, datetime):
-            rd_py = rd
-        else:
-            sues.append(None)
-            continue
-        sue = pead.compute_sue(
-            r.ticker,
-            actual_eps=Decimal(str(r.actual_eps)),
-            consensus_eps=Decimal(str(r.consensus_eps)),
-            as_of_date=rd_py,
-            db_path=db_path,
-        )
-        sues.append(sue)
+    """Vectorized SUE: standardize each surprise by the rolling std of the prior 8 surprises.
+
+    Equivalent to calling pead.compute_sue per row with lookback_quarters=8, but pure
+    pandas — no per-event DuckDB query (which on Windows costs ~150ms each and dominates
+    a 16k-event run). When prior history < 2 quarters or std is zero, falls back to the
+    industry-default std (pead.DEFAULT_INDUSTRY_STD) to match the per-event behavior.
+
+    db_path retained in signature for symmetry; unused here since all earnings rows are
+    already loaded by _load_data.
+    """
+    del db_path  # unused in vectorized path
     out = earnings.copy()
-    out["sue"] = sues
+    out = out.sort_values(["ticker", "report_date"]).reset_index(drop=True)
+    out["surprise"] = out["actual_eps"].astype(float) - out["consensus_eps"].astype(float)
+
+    # Per-ticker rolling std of the *prior* 8 surprises (shift(1) excludes current row).
+    rolling_std = (
+        out.groupby("ticker", group_keys=False)["surprise"]
+        .apply(lambda s: s.shift(1).rolling(window=8, min_periods=2).std())
+        .reset_index(drop=True)
+    )
+    # Fallback to industry default where rolling std is unavailable or zero.
+    fallback = float(pead.DEFAULT_INDUSTRY_STD)
+    std = rolling_std.where((rolling_std.notna()) & (rolling_std != 0.0), fallback)
+    out["sue"] = out["surprise"] / std
     return out.dropna(subset=["sue"]).reset_index(drop=True)
 
 

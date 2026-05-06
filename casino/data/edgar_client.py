@@ -59,9 +59,7 @@ class EdgarClient:
     ) -> None:
         cfg = get_config()
         self.user_agent = user_agent or cfg.sec_user_agent
-        self._client = client or httpx.Client(
-            timeout=30.0, headers={"User-Agent": self.user_agent}
-        )
+        self._client = client or httpx.Client(timeout=30.0, headers={"User-Agent": self.user_agent})
         self._owns_client = client is None
         self._limiter = _RateLimiter(max_calls=rate_limit, period=1.0)
 
