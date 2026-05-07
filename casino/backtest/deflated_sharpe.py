@@ -59,19 +59,30 @@ def deflated_sharpe(
     skew: float = 0.0,
     kurtosis: float = 3.0,
 ) -> float:
-    """Return the deflated Sharpe ratio.
+    """Return the deflated Sharpe ratio (Bailey-Lopez de Prado 2014, eq. 10).
 
-    Negative values mean the observed SR is consistent with overfitting given
-    the trial count. `kurtosis` is *non-excess* (3.0 = normal).
+    `sharpe` MUST be in per-period units (not annualized). For daily returns:
+    pass `mean(daily_returns) / std(daily_returns)` — i.e., do NOT multiply by
+    sqrt(252). The Mertens variance formula and the standardized expected-max-SR
+    function below both assume per-period SR.
+
+    The output is a dimensionless Z-score: positive and large = the observed SR
+    cleanly exceeds the expected max under the null of no skill across n_trials
+    independent strategies. Negative = consistent with overfitting.
+
+    `kurtosis` is *non-excess* (3.0 = normal).
     """
     if n_observations <= 1:
         return float("nan")
-    # Mertens variance of SR estimator
+    # Mertens 1991 variance of the per-period SR estimator.
     var_sr = (1.0 - skew * sharpe + ((kurtosis - 1.0) / 4.0) * sharpe**2) / (n_observations - 1)
     if var_sr <= 0.0:
         return float("nan")
-    e_max = _expected_max_sr(n_trials)
-    return (sharpe - e_max) / math.sqrt(var_sr)
+    sigma_sr = math.sqrt(var_sr)
+    # _expected_max_sr returns the standardized expected max (units of std). Scale
+    # to per-period SR units by multiplying by sigma_sr, then z-score.
+    e_max_normalized = _expected_max_sr(n_trials)
+    return (sharpe - e_max_normalized * sigma_sr) / sigma_sr
 
 
 def haircut_sharpe(
@@ -80,10 +91,16 @@ def haircut_sharpe(
 ) -> dict[str, Any]:
     """High-level wrapper returning {observed, deflated, p_value, is_significant}.
 
+    `observed_sr` MUST be per-period (daily). Do not pass annualized SR — the
+    Mertens variance and expected-max formulas both assume per-period units.
+    If you pass `returns` in metadata, this function will recompute per-period
+    SR from the series and use that, ignoring `observed_sr` for the math (it's
+    still echoed in the output for traceability).
+
     `backtest_metadata` keys consumed:
         n_trials       (int)         — number of param configurations tested
         n_observations (int)         — trade or daily-return count
-        returns        (Sequence)    — optional: returns to compute moments
+        returns        (Sequence)    — optional: returns to compute SR + moments
         skew           (float)       — optional: pre-computed skew
         kurtosis       (float)       — optional: pre-computed *non-excess* kurtosis
     """
@@ -91,16 +108,19 @@ def haircut_sharpe(
     n_obs = int(backtest_metadata.get("n_observations", 0))
     skew_v = backtest_metadata.get("skew")
     kurt_v = backtest_metadata.get("kurtosis")
+    sr_for_math = observed_sr
 
-    if (skew_v is None or kurt_v is None) and "returns" in backtest_metadata:
+    if "returns" in backtest_metadata:
         returns = pd.Series(backtest_metadata["returns"]).dropna()
         if not returns.empty and len(returns) > 3:
             arr = returns.to_numpy(dtype=float)
             mu = float(arr.mean())
             sigma = float(arr.std(ddof=1))
             if sigma > 0:
+                # Recompute per-period SR from the series so the moments and SR
+                # are consistent — avoids an annualized/per-period mismatch bug.
+                sr_for_math = mu / sigma
                 centered = (arr - mu) / sigma
-                # population moments (Fisher's g1, g2 not used; use raw moments)
                 if skew_v is None:
                     skew_v = float(np.mean(centered**3))
                 if kurt_v is None:
@@ -110,7 +130,7 @@ def haircut_sharpe(
     kurt_v = float(kurt_v) if kurt_v is not None else 3.0
 
     deflated = deflated_sharpe(
-        observed_sr,
+        sr_for_math,
         n_trials=n_trials,
         n_observations=n_obs,
         skew=skew_v,

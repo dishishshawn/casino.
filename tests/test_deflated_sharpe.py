@@ -26,8 +26,10 @@ def test_deflated_sr_penalizes_high_trial_count() -> None:
 
 
 def test_deflated_sr_negative_when_overfit() -> None:
-    # SR=0.5 with 1000 trials and only 100 observations should deflate negative
-    val = ds.deflated_sharpe(0.5, n_trials=1000, n_observations=100)
+    # Per-period SR=0.05 (≈ annualized 0.79 / sqrt(252)·something) with 1000 trials
+    # and only 100 observations: the standardized SR (~0.5σ) is well below the
+    # E[max SR null] of ~3.7σ → deflates strongly negative.
+    val = ds.deflated_sharpe(0.05, n_trials=1000, n_observations=100)
     assert val < 0
 
 
