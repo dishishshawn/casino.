@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from casino.backtest import deflated_sharpe as ds
 from casino.data import store
 from casino.signals import ts_momentum
 
@@ -57,6 +58,41 @@ def _per_year_sharpe(returns: pd.Series) -> dict[str, float]:
     return out
 
 
+def _backtest_weights_returns(
+    weights: pd.DataFrame,
+    prices: pd.DataFrame,
+    *,
+    cost_bps: float,
+    rebalance: Literal["monthly", "weekly", "daily"] = "monthly",
+) -> pd.Series:
+    """Run weight-based backtest and return the daily portfolio return series."""
+    common_cols = weights.columns.intersection(prices.columns)
+    if common_cols.empty:
+        return pd.Series(dtype=float)
+    w = weights[common_cols].sort_index()
+    p = prices[common_cols].sort_index()
+    common_idx = w.index.intersection(p.index)
+    w = w.loc[common_idx]
+    p = p.loc[common_idx]
+
+    if rebalance == "daily":
+        rebal_mask = pd.Series(True, index=w.index)
+    elif rebalance == "weekly":
+        rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+    else:  # monthly
+        idx_dt = pd.DatetimeIndex(w.index)
+        idx_naive = idx_dt.tz_localize(None) if idx_dt.tz is not None else idx_dt
+        months = pd.Series(idx_naive.to_period("M"), index=w.index)
+        rebal_mask = months.ne(months.shift(1)).fillna(True)
+
+    held = w.where(rebal_mask, np.nan).ffill().fillna(0.0)
+    rets = p.pct_change(fill_method=None).fillna(0.0)
+    port_ret = (held.shift(1).fillna(0.0) * rets).sum(axis=1)
+    weight_change = (held - held.shift(1).fillna(0.0)).abs().sum(axis=1)
+    cost_drag = weight_change * (cost_bps / 2.0) * 1e-4
+    return (port_ret - cost_drag).dropna()
+
+
 def _backtest_weights(
     weights: pd.DataFrame,
     prices: pd.DataFrame,
@@ -69,49 +105,28 @@ def _backtest_weights(
     Unlike vbt_research's quintile-rank harness, this respects the actual
     target weights (vol-targeting matters here). Rebalances on the *first*
     trading day of each new month/week (or every day in 'daily' mode).
-
-    Returns dict with sharpe, sortino, max_drawdown, win_rate, total_return,
-    annualized_return, annualized_vol, avg_turnover.
     """
-    common_cols = weights.columns.intersection(prices.columns)
-    if common_cols.empty:
+    port_ret = _backtest_weights_returns(weights, prices, cost_bps=cost_bps, rebalance=rebalance)
+    if port_ret.empty:
         return _empty_metrics()
-    w = weights[common_cols].sort_index()
-    p = prices[common_cols].sort_index()
-    common_idx = w.index.intersection(p.index)
-    w = w.loc[common_idx]
-    p = p.loc[common_idx]
 
-    # Build rebalance mask: True on rows where we resize positions.
-    if rebalance == "daily":
-        rebal_mask = pd.Series(True, index=w.index)
-    elif rebalance == "weekly":
-        rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
-    else:  # monthly
-        # to_period("M") drops tz; tz-strip first so pandas doesn't warn.
+    # Recompute turnover for the avg-turnover metric (cheap to redo).
+    common_cols = weights.columns.intersection(prices.columns)
+    w = weights[common_cols].sort_index()
+    common_idx = w.index.intersection(prices.index)
+    w = w.loc[common_idx]
+    if rebalance == "monthly":
         idx_dt = pd.DatetimeIndex(w.index)
         idx_naive = idx_dt.tz_localize(None) if idx_dt.tz is not None else idx_dt
         months = pd.Series(idx_naive.to_period("M"), index=w.index)
         rebal_mask = months.ne(months.shift(1)).fillna(True)
-
-    # Held weights: forward-fill last rebal target until next rebal row.
+    elif rebalance == "weekly":
+        rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+    else:
+        rebal_mask = pd.Series(True, index=w.index)
     held = w.where(rebal_mask, np.nan).ffill().fillna(0.0)
-
-    # Daily returns
-    rets = p.pct_change(fill_method=None).fillna(0.0)
-
-    # Apply yesterday's held weights to today's returns (no look-ahead).
-    port_ret = (held.shift(1).fillna(0.0) * rets).sum(axis=1)
-
-    # Turnover cost only on rebalance days. cost_bps is round-trip; per-unit
-    # weight change costs cost_bps/2 (one side of the round trip).
     weight_change = (held - held.shift(1).fillna(0.0)).abs().sum(axis=1)
-    cost_drag = weight_change * (cost_bps / 2.0) * 1e-4
-    port_ret = port_ret - cost_drag
-
-    port_ret = port_ret.dropna()
-    if port_ret.empty:
-        return _empty_metrics()
+    avg_turnover = float(weight_change[rebal_mask].mean())
 
     mu = float(port_ret.mean())
     sigma = float(port_ret.std(ddof=1))
@@ -126,7 +141,6 @@ def _backtest_weights(
     max_dd = float((cum / cum.cummax() - 1.0).min())
     total_return = float(cum.iloc[-1] - 1.0)
     win_rate = float((port_ret > 0).sum() / len(port_ret))
-    avg_turnover = float(weight_change[rebal_mask].mean())
 
     yearly = _per_year_sharpe(port_ret)
     return {
@@ -169,6 +183,10 @@ class TSMomResult:
     cost_bps: float
     per_asset_avg_weight: dict[str, float]
     yearly_sharpe: dict[str, float]
+    deflated_sharpe: float
+    deflated_p_value: float
+    deflated_n_trials: int
+    deflated_n_observations: int
     verdict: str
     verdict_detail: str
 
@@ -190,6 +208,7 @@ def run_tsmom(
     universe: list[str],
     cost_bps: float = _DEFAULT_COST_BPS,
     mode: Literal["long_short", "long_only"] = _DEFAULT_MODE,
+    n_trials: int = 10,
     db_path: Path | None = None,
     save_csv: bool = True,
 ) -> TSMomResult:
@@ -213,6 +232,19 @@ def run_tsmom(
     total_return = metrics["total_return"]
     ann_vol = metrics["ann_vol"]
 
+    # Deflated Sharpe (Bailey-Lopez de Prado): correct for selection bias.
+    daily_returns = _backtest_weights_returns(
+        weights, prices, cost_bps=cost_bps, rebalance="monthly"
+    )
+    deflate_result = ds.haircut_sharpe(
+        sharpe,
+        {
+            "n_trials": n_trials,
+            "n_observations": len(daily_returns),
+            "returns": daily_returns.tolist(),
+        },
+    )
+
     days = (prices.index.max() - prices.index.min()).days
     years = max(days / 365.25, 1e-6)
     ann_ret = (1 + total_return) ** (1 / years) - 1.0
@@ -230,10 +262,12 @@ def run_tsmom(
 
     pass_sharpe = sharpe >= 0.5
     pass_dd = max_dd > -0.25
-    if pass_sharpe and pass_dd:
+    pass_deflated = bool(deflate_result["is_significant"])
+    if pass_sharpe and pass_dd and pass_deflated:
         verdict = "PASS"
         detail = (
-            f"Sharpe {sharpe:.2f} >= 0.5 AND Max DD {max_dd:.1%} > -25%. "
+            f"Sharpe {sharpe:.2f} >= 0.5, Max DD {max_dd:.1%} > -25%, deflated Sharpe "
+            f"{deflate_result['deflated']:.2f} > 0 (p={deflate_result['p_value']:.4f}). "
             f"Annualized return {ann_ret:.1%}; signal is retail-tradeable on this universe."
         )
     else:
@@ -243,6 +277,11 @@ def run_tsmom(
             reasons.append(f"Sharpe {sharpe:.2f} < 0.5")
         if not pass_dd:
             reasons.append(f"Max DD {max_dd:.1%} <= -25%")
+        if not pass_deflated:
+            reasons.append(
+                f"deflated Sharpe {deflate_result['deflated']:.2f} not significant "
+                f"(p={deflate_result['p_value']:.4f}, n_trials={n_trials})"
+            )
         detail = (
             "; ".join(reasons)
             + ". Try widening the lookback blend, raising vol-target, or expanding the universe "
@@ -264,6 +303,10 @@ def run_tsmom(
         cost_bps=cost_bps,
         per_asset_avg_weight=avg_w,
         yearly_sharpe=yearly_sharpe,
+        deflated_sharpe=float(deflate_result["deflated"]),
+        deflated_p_value=float(deflate_result["p_value"]),
+        deflated_n_trials=int(deflate_result["n_trials"]),
+        deflated_n_observations=int(deflate_result["n_observations"]),
         verdict=verdict,
         verdict_detail=detail,
     )
@@ -281,6 +324,11 @@ def _print_human(r: TSMomResult) -> None:
     print(f"cost:         {r.cost_bps} bps round-trip")
     print()
     print(f"Sharpe:       {r.sharpe:>8.3f}   (PASS target >= 0.5)")
+    print(
+        f"Deflated SR:  {r.deflated_sharpe:>8.3f}   (PASS target > 0, p<0.05; "
+        f"n_trials={r.deflated_n_trials}, n_obs={r.deflated_n_observations})"
+    )
+    print(f"  p-value:    {r.deflated_p_value:>8.4f}")
     print(f"Sortino:      {r.sortino:>8.3f}")
     print(f"Max DD:       {r.max_drawdown:>8.3%}   (PASS target > -25%)")
     print(f"Win rate:     {r.win_rate:>8.3%}")
@@ -322,6 +370,12 @@ def main(argv: list[str] | None = None) -> int:
         "--mode",
         choices=("long_short", "long_only"),
         default=_DEFAULT_MODE,
+    )
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=10,
+        help="Trial count for deflated Sharpe (default 10; bumps the haircut, set higher if you've iterated more).",
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-save", action="store_true")
@@ -365,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
         universe=universe,
         cost_bps=args.cost_bps,
         mode=args.mode,
+        n_trials=args.n_trials,
         save_csv=not args.no_save,
     )
 
