@@ -28,15 +28,107 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 from loguru import logger
 
-from casino.backtest import vbt_research
 from casino.data import store
 from casino.signals import ts_momentum
 
 _DEFAULT_COST_BPS = 7.5
 _DEFAULT_MODE: Literal["long_short", "long_only"] = "long_short"
 _DEFAULT_UNIVERSE_FILE = "universe_tsmom.txt"
+_BDAYS_PER_YEAR = 252
+
+
+def _backtest_weights(
+    weights: pd.DataFrame,
+    prices: pd.DataFrame,
+    *,
+    cost_bps: float,
+    rebalance: Literal["monthly", "weekly", "daily"] = "monthly",
+) -> dict[str, float]:
+    """Run a position-weight backtest with periodic rebalancing.
+
+    Unlike vbt_research's quintile-rank harness, this respects the actual
+    target weights (vol-targeting matters here). Rebalances on the *first*
+    trading day of each new month/week (or every day in 'daily' mode).
+
+    Returns dict with sharpe, sortino, max_drawdown, win_rate, total_return,
+    annualized_return, annualized_vol, avg_turnover.
+    """
+    common_cols = weights.columns.intersection(prices.columns)
+    if common_cols.empty:
+        return _empty_metrics()
+    w = weights[common_cols].sort_index()
+    p = prices[common_cols].sort_index()
+    common_idx = w.index.intersection(p.index)
+    w = w.loc[common_idx]
+    p = p.loc[common_idx]
+
+    # Build rebalance mask: True on rows where we resize positions.
+    if rebalance == "daily":
+        rebal_mask = pd.Series(True, index=w.index)
+    elif rebalance == "weekly":
+        rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+    else:  # monthly
+        months = pd.Series(w.index.to_period("M"), index=w.index)
+        rebal_mask = months.ne(months.shift(1)).fillna(True)
+
+    # Held weights: forward-fill last rebal target until next rebal row.
+    held = w.where(rebal_mask, np.nan).ffill().fillna(0.0)
+
+    # Daily returns
+    rets = p.pct_change(fill_method=None).fillna(0.0)
+
+    # Apply yesterday's held weights to today's returns (no look-ahead).
+    port_ret = (held.shift(1).fillna(0.0) * rets).sum(axis=1)
+
+    # Turnover cost only on rebalance days. cost_bps is round-trip; per-unit
+    # weight change costs cost_bps/2 (one side of the round trip).
+    weight_change = (held - held.shift(1).fillna(0.0)).abs().sum(axis=1)
+    cost_drag = weight_change * (cost_bps / 2.0) * 1e-4
+    port_ret = port_ret - cost_drag
+
+    port_ret = port_ret.dropna()
+    if port_ret.empty:
+        return _empty_metrics()
+
+    mu = float(port_ret.mean())
+    sigma = float(port_ret.std(ddof=1))
+    sharpe = mu / sigma * np.sqrt(_BDAYS_PER_YEAR) if sigma > 0 else float("nan")
+    downside_sigma = float(port_ret.clip(upper=0).std(ddof=1))
+    sortino = (
+        mu / downside_sigma * np.sqrt(_BDAYS_PER_YEAR)
+        if downside_sigma > 0
+        else float("nan")
+    )
+    cum = (1.0 + port_ret).cumprod()
+    max_dd = float((cum / cum.cummax() - 1.0).min())
+    total_return = float(cum.iloc[-1] - 1.0)
+    win_rate = float((port_ret > 0).sum() / len(port_ret))
+    avg_turnover = float(weight_change[rebal_mask].mean())
+
+    return {
+        "sharpe": float(sharpe),
+        "sortino": float(sortino),
+        "max_drawdown": max_dd,
+        "win_rate": win_rate,
+        "total_return": total_return,
+        "ann_vol": sigma * np.sqrt(_BDAYS_PER_YEAR),
+        "avg_turnover": avg_turnover,
+    }
+
+
+def _empty_metrics() -> dict[str, float]:
+    return {
+        "sharpe": float("nan"),
+        "sortino": float("nan"),
+        "max_drawdown": float("nan"),
+        "win_rate": float("nan"),
+        "total_return": float("nan"),
+        "ann_vol": float("nan"),
+        "avg_turnover": float("nan"),
+    }
 
 
 @dataclass(frozen=True)
@@ -90,35 +182,25 @@ def run_tsmom(
 
     weights = ts_momentum.compute_tsmom_panel(prices, mode=mode)
 
-    def _signal_func(_universe, _start, _end, **_kwargs):  # noqa: ANN001
-        return weights
+    metrics = _backtest_weights(weights, prices, cost_bps=cost_bps, rebalance="monthly")
+    sharpe = metrics["sharpe"]
+    sortino = metrics["sortino"]
+    max_dd = metrics["max_drawdown"]
+    win_rate = metrics["win_rate"]
+    total_return = metrics["total_return"]
+    ann_vol = metrics["ann_vol"]
 
-    results, _csv = vbt_research.run_parameter_sweep(
-        _signal_func,
-        param_grid={"mode": [mode]},
-        universe=list(prices.columns),
-        prices=prices,
-        start_date=prices.index.min().to_pydatetime(),
-        end_date=prices.index.max().to_pydatetime(),
-        cost_bps=cost_bps,
-        save_results=save_csv,
-    )
-    if results.empty:
-        raise RuntimeError("vectorbt sweep returned no rows")
-    best = results.iloc[0]
-
-    sharpe = float(best["sharpe"])
-    sortino = float(best["sortino"])
-    max_dd = float(best["max_drawdown"])
-    win_rate = float(best["win_rate"])
-    total_return = float(best["total_return"])
-
-    # Time span in years (approx).
     days = (prices.index.max() - prices.index.min()).days
     years = max(days / 365.25, 1e-6)
     ann_ret = (1 + total_return) ** (1 / years) - 1.0
-    # Annualized vol estimate from sharpe (best.sharpe = ann_ret / ann_vol assuming rf=0).
-    ann_vol = ann_ret / sharpe if sharpe and abs(sharpe) > 1e-9 else 0.0
+
+    if save_csv:
+        out_dir = Path("backtests/results")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        out_path = out_dir / f"tsmom_{ts_str}.csv"
+        pd.DataFrame([{**metrics, "mode": mode, "ann_ret": ann_ret}]).to_csv(out_path, index=False)
+        logger.info("tsmom result written to {}", out_path)
 
     avg_w = {col: float(np.nanmean(weights[col].abs())) for col in weights.columns}
 
