@@ -1,0 +1,15 @@
+# Cross-asset ETF universe for TS-momentum baseline.
+# Covers US equity, intl/EM equity, long/intermediate Treasuries, gold, broad
+# commodities, oil. Retail-tradeable on Alpaca (cash account, no margin).
+# Hurst-Ooi-Pedersen TSMOM is documented to need cross-asset breadth — pure
+# US-equity TSMOM has compressed since 2010.
+SPY
+QQQ
+IWM
+EFA
+EEM
+TLT
+IEF
+GLD
+DBC
+USO
