@@ -77,6 +77,7 @@ def compute_tsmom_panel(
     lookbacks: tuple[int, ...] = _LOOKBACKS_BDAYS,
     target_vol: float = _TARGET_VOL_ANN,
     mode: Literal["long_short", "long_only"] = "long_short",
+    gross_target: float = 1.0,
 ) -> pd.DataFrame:
     """Compute the TSMOM target-weight panel.
 
@@ -111,10 +112,16 @@ def compute_tsmom_panel(
     vol = _realized_vol(prices).clip(lower=_MIN_VOL_ANN)
     leverage = (target_vol / vol).clip(upper=3.0)  # cap leverage for sanity
 
-    # Final weight panel.
+    # Final weight panel — equal-risk across assets, then scale total gross to target.
     weights = avg_sign * leverage
     if mode == "long_only":
         weights = weights.clip(lower=0.0)
+
+    # Normalize per-row so sum |w| ≤ gross_target. Keeps each asset's *relative*
+    # vol-targeted weight intact; just caps total portfolio leverage.
+    abs_sum = weights.abs().sum(axis=1)
+    scale = (gross_target / abs_sum).clip(upper=1.0).fillna(0.0)
+    weights = weights.mul(scale, axis=0)
 
     # Mask the burn-in period (longest lookback hasn't closed yet for that cell).
     longest = max(lookbacks)

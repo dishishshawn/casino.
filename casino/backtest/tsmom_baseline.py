@@ -71,7 +71,10 @@ def _backtest_weights(
     elif rebalance == "weekly":
         rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
     else:  # monthly
-        months = pd.Series(w.index.to_period("M"), index=w.index)
+        # to_period("M") drops tz; tz-strip first so pandas doesn't warn.
+        idx_dt = pd.DatetimeIndex(w.index)
+        idx_naive = idx_dt.tz_localize(None) if idx_dt.tz is not None else idx_dt
+        months = pd.Series(idx_naive.to_period("M"), index=w.index)
         rebal_mask = months.ne(months.shift(1)).fillna(True)
 
     # Held weights: forward-fill last rebal target until next rebal row.
@@ -197,7 +200,7 @@ def run_tsmom(
     if save_csv:
         out_dir = Path("backtests/results")
         out_dir.mkdir(parents=True, exist_ok=True)
-        ts_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        ts_str = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         out_path = out_dir / f"tsmom_{ts_str}.csv"
         pd.DataFrame([{**metrics, "mode": mode, "ann_ret": ann_ret}]).to_csv(out_path, index=False)
         logger.info("tsmom result written to {}", out_path)
