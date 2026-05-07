@@ -40,6 +40,23 @@ _DEFAULT_UNIVERSE_FILE = "universe_tsmom.txt"
 _BDAYS_PER_YEAR = 252
 
 
+def _per_year_sharpe(returns: pd.Series) -> dict[str, float]:
+    """Annual Sharpe + total-return breakdown so we can spot regime concentration."""
+    if returns.empty:
+        return {}
+    out: dict[str, float] = {}
+    for year, group in returns.groupby(returns.index.year):
+        if len(group) < 20:
+            continue
+        mu = float(group.mean())
+        sd = float(group.std(ddof=1))
+        sharpe = mu / sd * np.sqrt(_BDAYS_PER_YEAR) if sd > 0 else float("nan")
+        total = float((1.0 + group).prod() - 1.0)
+        out[str(int(year))] = round(sharpe, 3)
+        out[f"{int(year)}_ret"] = round(total, 4)
+    return out
+
+
 def _backtest_weights(
     weights: pd.DataFrame,
     prices: pd.DataFrame,
@@ -111,6 +128,7 @@ def _backtest_weights(
     win_rate = float((port_ret > 0).sum() / len(port_ret))
     avg_turnover = float(weight_change[rebal_mask].mean())
 
+    yearly = _per_year_sharpe(port_ret)
     return {
         "sharpe": float(sharpe),
         "sortino": float(sortino),
@@ -119,6 +137,7 @@ def _backtest_weights(
         "total_return": total_return,
         "ann_vol": sigma * np.sqrt(_BDAYS_PER_YEAR),
         "avg_turnover": avg_turnover,
+        **{f"yearly_{k}": v for k, v in yearly.items()},
     }
 
 
@@ -149,6 +168,7 @@ class TSMomResult:
     annualized_vol: float
     cost_bps: float
     per_asset_avg_weight: dict[str, float]
+    yearly_sharpe: dict[str, float]
     verdict: str
     verdict_detail: str
 
@@ -206,6 +226,7 @@ def run_tsmom(
         logger.info("tsmom result written to {}", out_path)
 
     avg_w = {col: float(np.nanmean(weights[col].abs())) for col in weights.columns}
+    yearly_sharpe = {k.removeprefix("yearly_"): v for k, v in metrics.items() if k.startswith("yearly_")}
 
     pass_sharpe = sharpe >= 0.5
     pass_dd = max_dd > -0.25
@@ -242,6 +263,7 @@ def run_tsmom(
         annualized_vol=float(abs(ann_vol)),
         cost_bps=cost_bps,
         per_asset_avg_weight=avg_w,
+        yearly_sharpe=yearly_sharpe,
         verdict=verdict,
         verdict_detail=detail,
     )
@@ -270,6 +292,14 @@ def _print_human(r: TSMomResult) -> None:
         print("Avg |weight| per asset:")
         for k, v in sorted(r.per_asset_avg_weight.items()):
             print(f"  {k:<5}  {v:>+7.3f}")
+    if r.yearly_sharpe:
+        print()
+        print("Per-year Sharpe / total return (regime-concentration check):")
+        years = sorted(k for k in r.yearly_sharpe if not k.endswith("_ret"))
+        for y in years:
+            s = r.yearly_sharpe.get(y, float("nan"))
+            t = r.yearly_sharpe.get(f"{y}_ret", float("nan"))
+            print(f"  {y}:  Sharpe {s:>+6.2f}   return {t:>+7.2%}")
     print()
     print(f"VERDICT: {r.verdict}")
     print(f"  {r.verdict_detail}")
