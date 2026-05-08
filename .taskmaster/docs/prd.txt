@@ -183,6 +183,45 @@ Otherwise: KILL.
 - All caps in `casino/execution/risk.py` are enforced; the runner does not add a parallel sizing path.
 - Kill-switch end-to-end re-verified post-task-36 in `tests/test_kill_switch.py`.
 
+#### AMENDMENT 2026-05-08 — Option B parallel experiment: regime-filtered TSMOM shadow simulator
+
+**Context.** The live vanilla TSMOM bot started on 2026-05-08 under the 30-day cap (run_id `DiCaprio` in `paper_clock`; first rebal_event recorded same day). Vanilla TSMOM failed the sensitivity grid (task 37). The user accepted this with a fixed-deadline cap. Hypothesis worth running in parallel: AQR's "Trend Following in Focus" (2023 update) and Hurst-Ooi-Pedersen (2024 follow-up) both report that conditioning bond-leg sizing on the level of the yield-curve slope (10y - 3m) materially improves drawdowns over 2018-2024. The 2022-2024 yield-curve inversion likely killed both vanilla TSMOM bonds and standalone carry; a slope filter would have flattened the bond legs (TLT, IEF) during the inversion.
+
+**User decision.** Option B — run a *shadow simulator* with regime-filtered TSMOM in parallel to the live vanilla bot, both starting on 2026-05-08, both emitting day-30 verdicts on 2026-06-07. The shadow is sim-only (real DuckDB OHLCV, deterministic next-open fills, no Alpaca calls). This avoids the cost of a second Alpaca paper account while still producing comparable head-to-head data.
+
+**Run-id convention.** Two distinct `paper_clock` rows:
+- `run_id="DiCaprio"` — the live Alpaca paper bot running vanilla `compute_tsmom_panel`. Fixed by `casino.execution.paper_clock.DEFAULT_RUN_ID`.
+- `run_id="Belfort"` — the shadow sim running `compute_tsmom_regime_panel`. Fixed by `casino.execution.tsmom_shadow_runner.SHADOW_RUN_ID`.
+
+**Shadow strategy.** `casino.signals.ts_momentum_regime.compute_tsmom_regime_panel` wraps the vanilla TSMOM panel and applies one rule: if the FRED slope `DGS10 - DTB3` lagged one observation is `< 0`, set the bond-leg cells (TLT, IEF) at that row to 0.0 and re-normalize so `sum(|w|) ≤ gross_target`. Equity legs are untouched. Burn-in NaN cells are preserved (never overwritten with 0). The slope is read T-1 (FRED daily publishes after equity close), eliminating any look-ahead ambiguity. The signal is deterministic — `signals/*` hard-rule respected.
+
+**Shadow execution.** `casino.execution.sim_broker.SimBroker` is a drop-in shadow for `AlpacaBroker` exposing the same surface (`get_account`, `get_positions`, `submit_bracket_order`, `close_position`, `cancel_all`, `is_market_open`). Fills are deterministic: a bracket order submitted on day T fills at the next available DuckDB OHLCV bar's *open* (T+1 or later). Stops are enforced bar-by-bar inside `mark_to_market(as_of)` — if a long's bar low ≤ stop_price, the position is force-closed at exactly stop_price. All sim state lives in `state.sqlite` in tables prefixed `sim_*` (sim_account, sim_orders, sim_fills, sim_positions, sim_nav_history), keyed by run_id. Two sim runs in the same DB are fully isolated.
+
+**Comparison-with-live workflow.** `casino.execution.tsmom_clock_check` accepts `--run-id <id>` (default `DiCaprio`). Day-30 verdict files use parametrized filenames: `reports/tsmom_paper_30day_verdict.csv` for `DiCaprio` (default; backwards compatible) and `reports/tsmom_paper_30day_verdict_<run_id>.csv` for any other run_id. Discord alerts for the verdict are tagged with `[run_id]` so the operator can distinguish the two streams. **COMMIT/KILL applies per-run-id.** The user decides what to do if the two verdicts diverge — there is no automatic rule that promotes the regime-filtered variant to live.
+
+**Dashboard.** `casino/monitoring/dashboard.py` renders a side-by-side comparison panel: `DiCaprio` (left, live vanilla) vs `Belfort` (right, regime-filtered shadow). Each column shows day count, equity, P&L, current weights, criterion table, and verdict. The comparison is the primary visual for this experiment.
+
+**Hard rules respected.**
+- `signals/*` deterministic: the regime function only consults its inputs; no env-var or timestamp branches.
+- All times stored UTC.
+- `casino/data/store.py` is the only DuckDB seam: shadow runner reads OHLCV via `ts_momentum.load_ohlcv_panel` and FRED via `store.load_fred_panel`.
+- `backtest/` not imported from execution: the shadow runner lives in `execution/`; the BT-style baseline distribution that the future KS test would compare against lives in `backtest/`. No cross-import.
+- Money values are `Decimal` end-to-end through the sim broker.
+- Every bracket order carries a stop_price (CLAUDE.md hard rule 3); the sim enforces it bar-by-bar.
+
+**The shadow does NOT modify the live bot.**
+- `casino/execution/tsmom_runner.py` is unchanged.
+- `casino/signals/ts_momentum.py::compute_tsmom_panel` is unchanged.
+- The live bot's `book.orders` / `book.positions` / `book.fills` tables are not written to by the shadow path.
+- Other downstream tasks (39, 40, 41, 42) remain BLOCKED.
+
+**Tests** (all passing as of 2026-05-08, 326 tests total, ruff + format + mypy + pytest clean):
+- `tests/test_ts_momentum_regime.py` — vanilla equivalence, filter fires, gross-cap preservation, no-look-ahead, burn-in preservation, missing-FRED safety.
+- `tests/test_sim_broker.py` — order round-trip, stop-loss firing, multi-day NAV, run_id isolation, close, idempotency.
+- `tests/test_tsmom_shadow_runner.py` — off-rebal-day MTM, force end-to-end, catchup, isolation from live runner, plan caps.
+- `tests/test_tsmom_clock_check.py` — extended with run_id scoping + parametrized verdict filename test.
+- `tests/test_dashboard.py` — extended with comparison-panel render tests.
+
 ---
 
 ## 4. Architecture (delta from v1 PRD)
