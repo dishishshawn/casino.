@@ -180,3 +180,91 @@ def test_build_snapshot_smoke(state: Path) -> None:
     assert snap.positions == []
     assert snap.recent_calls == []
     assert snap.trading_disabled is False
+
+
+# ---------------------------------------------------------------------------- 30-day-cap panel
+
+
+def test_paper_clock_panel_awaiting_first_rebal(state: Path) -> None:
+    """Before the runner has been invoked, the panel reports ``started=False``."""
+    panel = dashboard.build_paper_clock_panel(broker=None, db_path=state)
+    assert panel.started is False
+    assert panel.days_elapsed is None
+    assert panel.cap_days == 30
+    html = dashboard.paper_clock_panel_html(panel)
+    assert "awaiting first rebal" in html
+
+
+def test_paper_clock_panel_renders_after_clock_started(state: Path) -> None:
+    """After ``ensure_started`` runs, the panel surfaces day count + criteria."""
+    from casino.execution import paper_clock as _pc
+
+    _pc.ensure_started(start_nav=Decimal("100000"), db_path=state)
+    panel = dashboard.build_paper_clock_panel(broker=None, db_path=state)
+    assert panel.started is True
+    assert panel.days_elapsed is not None
+    assert panel.start_nav == Decimal("100000")
+    # Drawdown / single-day / KS criteria evaluated even without a broker.
+    assert any(c.name == "drawdown" for c in panel.criteria)
+    assert any(c.name == "single_day" for c in panel.criteria)
+    html = dashboard.paper_clock_panel_html(panel)
+    assert "30-day cap" in html
+
+
+def test_paper_clock_panel_drift_red_above_half_pct(
+    state: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reconcile drift > 0.5% of NAV must render the verdict-gate flag in red."""
+    from casino.execution import paper_clock as _pc
+    from casino.execution.alpaca_broker import (
+        AlpacaBroker,
+        BrokerAccount,
+    )
+    from tests.test_risk import FakeTradingClient
+
+    _pc.ensure_started(start_nav=Decimal("100000"), db_path=state)
+    # Plant a 0.7% book-only drift: $700 of position the broker doesn't see.
+    book.upsert_position(
+        symbol="AAA",
+        side="long",
+        qty=7,
+        avg_entry_price=Decimal("100"),
+        db_path=state,
+    )
+    account = BrokerAccount(
+        account_number="paper-1",
+        status="ACTIVE",
+        equity=Decimal("100000"),
+        cash=Decimal("100000"),
+        buying_power=Decimal("100000"),
+        last_equity=Decimal("100000"),
+        pattern_day_trader=False,
+        trading_blocked=False,
+    )
+    fake = FakeTradingClient(account=account, positions=[])
+    broker = AlpacaBroker(api_key="k", secret_key="s", paper=True)
+    broker.set_client(fake)
+
+    panel = dashboard.build_paper_clock_panel(broker=broker, db_path=state)
+    assert panel.reconcile_drift_fraction > 0.005
+    assert panel.reconcile_drift_red is True
+
+
+def test_paper_clock_panel_html_pending_verdict(state: Path) -> None:
+    """A started clock with no verdict should render 'PENDING'."""
+    from casino.execution import paper_clock as _pc
+
+    _pc.ensure_started(start_nav=Decimal("100000"), db_path=state)
+    panel = dashboard.build_paper_clock_panel(broker=None, db_path=state)
+    html = dashboard.paper_clock_panel_html(panel)
+    assert "PENDING" in html
+
+
+def test_paper_clock_panel_html_commit_verdict(state: Path) -> None:
+    from casino.execution import paper_clock as _pc
+
+    _pc.ensure_started(start_nav=Decimal("100000"), db_path=state)
+    _pc.set_verdict(verdict="COMMIT", db_path=state)
+    panel = dashboard.build_paper_clock_panel(broker=None, db_path=state)
+    html = dashboard.paper_clock_panel_html(panel)
+    assert "COMMIT" in html

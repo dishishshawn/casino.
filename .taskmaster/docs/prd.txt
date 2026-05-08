@@ -122,6 +122,67 @@ No live trading until ALL of the following:
 ### Hard restart rule
 If at any point a previously-PASSED gate FAILs on more rigorous re-test (e.g., post-2006 strict-OOS Sharpe drops below 0.5 after vol-target sensitivity grid), treat the prior result as a discovery artifact and restart Branch C at zero. **The 8 weeks already spent on EDLLLS are sunk cost; the next 90 days should be spent generating an additional, diversified, well-validated track record — not another single-signal backtest.**
 
+#### BLOCKED 2026-05-07 — TSMOM sensitivity grid FAIL (task 37)
+
+The 90-cell sensitivity grid (lookback ∈ {1,3,6,9,12,15}m × vol-target ∈ {6,8,10,12,15}% × rebal ∈ {weekly, biweekly, monthly}) was run on the strict-OOS 2006-04 → 2026-05 universe at 12 bps RT (`reports/tsmom_sensitivity.csv`, `reports/tsmom_sensitivity.md`).
+
+- chosen_sharpe = 0.3461 (blend(1,3,6,12) / 10% vol / monthly)
+- grid_mean = 0.2876
+- grid_max = 0.4701 (3m / 8% vol / biweekly)
+- top_quartile_cutoff = 0.3743
+- chosen percentile = 0.5556
+- VERDICT: **FAIL** — chosen config sits at the 56th percentile, *below* the 75th-percentile top-quartile cutoff. The chosen point is also dominated by an entire band of single-lookback (3m / 6m) cells at weekly+biweekly cadence, which is the textbook signature of overfitting: the production blend was tuned against a specific risk profile that the broader grid does not corroborate. Per the hard-restart rule above, the previously-PASSED TSMOM gate is treated as a discovery artifact.
+
+Additional evidence the headline 0.704 was fragile: with the grid-correct DSR n_trials=90, the chosen-config deflated Sharpe is **−1.40** (versus the n_trials=10 baseline that was used to clear the original gate). Selection-bias correction at the actual trial count consumed all of the apparent edge.
+
+**BLOCKED downstream tasks (cannot proceed until Branch C restarts):**
+- Task 39 — TSMOM + carry ensemble baseline (depends on TSMOM as 1st leg)
+- Task 40 — Live paper-trade TSMOM+carry ensemble (depends on 39)
+- Task 41 — Monitoring dashboard updates for TSMOM and carry
+- Task 42 — Form 4 cluster signal as 3rd ensemble leg (depends on 39)
+
+Restart options (deferred to next planning session): (a) widen ETF universe and re-run grid, (b) replace TSMOM with a different trend representation (e.g. cross-sectional momentum on the same universe, breakout filter), or (c) lead with carry as 1st leg (task 38) and treat any TSMOM variant as add-on only if its grid percentile recovers.
+
+#### AMENDMENT 2026-05-07 — Branch C 30-day cap (overrides PRD §6.3 / §2.4 for TSMOM-alone paper)
+
+**Context.** Task 37 (sensitivity grid) FAIL'd at the 56th percentile and DSR n_trials=90 = -1.40. Task 38 (carry signal) FAIL'd standalone at Sharpe -0.11, DSR -3.13; ensemble gain over TSMOM ≈ 0. Per the §3 hard-restart rule the prior TSMOM gate is a discovery artifact.
+
+**User decision (verbatim).** "Don't add a leg. Paper-trade TSMOM alone, 30-day cap on Branch C, then commit or kill." The user explicitly accepts the risk of paper-trading the failed-sensitivity TSMOM config in exchange for a fixed deadline that prevents indefinite signal-hunting.
+
+**Scope override.** The original 3-month paper window (PRD §6.3 / §2.4) is reduced to a binding **30-day cap** for Branch C TSMOM-alone. The 90-day plan §3 weeks 9-12 schedule is suspended for Branch C; ensemble work (tasks 39-40) and Form 4 (task 42) remain BLOCKED. After day 30 a binary COMMIT-or-KILL verdict is emitted by `casino.execution.tsmom_clock_check --verdict`.
+
+**The 30-day cap regime is operationally encoded in two modules:**
+- `casino/execution/tsmom_runner.py` — monthly rebal (manual run only; the runner does NOT cron-schedule itself; the 30-day clock starts when the operator first invokes it on a month-end).
+- `casino/execution/tsmom_clock_check.py` — daily kill-criteria monitor + day-30 verdict CLI.
+
+**Long-only deviation.** Alpaca paper *cash* accounts cannot short. The runner forces `mode="long_only"` regardless of caller intent. The variant being validated on paper is therefore TSMOM-long-only, not the long-short variant in the backtest. This is intentional: documenting the deviation and accepting that paper P&L is not a 1:1 read on the long-short backtest.
+
+**Kill criteria (any one fires → flatten + disable + Discord alert + persisted `kill_event` row):**
+1. **Drawdown** > 10% of starting NAV (vbt baseline MaxDD -29% over 20yr → 10% in 30 days is >2σ tail; suspect signal/exec misalignment).
+2. **Single-day** P&L drop > 5% NAV (sizing or risk-cap bug).
+3. **Cap violation** — gross > 1.0+0.02 buffer or any single-name > 10% NAV (CLAUDE.md hard-rule caps).
+4. **Reconcile drift** > 1% NAV (broker-vs-book; fill-tracking bug we cannot afford to discover live).
+5. **KS-test divergence** at day ≥ 14, paper daily returns vs `reports/tsmom_backtest_returns.csv`, two-sample p < 0.01 → kill.
+
+**Day-30 COMMIT preconditions (ALL required):**
+1. Zero kill_event rows.
+2. ≥ 1 monthly rebalance completed end-to-end.
+3. Reconcile drift now < 0.5% NAV.
+4. Paper Sharpe ≥ -0.2 (deliberately loose; 30 days is a tiny sample).
+5. KS-test p > 0.10 (or unavailable — treated as PASS with caveat).
+
+Otherwise: KILL.
+
+**COMMIT does NOT authorize live trading.** It means "Branch C lives; the operator now decides whether to (a) start ensemble work with a different complementary signal, (b) extend paper trading toward the live-cash gate (PRD §2.4), or (c) park Branch C and start a new branch". KILL means abandon TSMOM-alone, reassess. The hard-restart rule in §3 still applies.
+
+**The full PRD §2.4 live-cash gate (3+ months paper, ensemble DSR > 0 at n_trials=30, KS distribution match, Backtrader validator, kill-switch end-to-end) remains in force.** The 30-day cap is a *Branch C survival check*, not a substitute for the live-cash gate.
+
+**Operational guarantees encoded in code (see also `tests/test_tsmom_runner.py`, `tests/test_tsmom_clock_check.py`, `tests/test_kill_switch.py`):**
+- Runner refuses to run if `ALPACA_BASE_URL` does not contain `paper` (defense in depth against env-var typo flipping live).
+- Every entry order is a bracket order with broker-side stop at -10% (CLAUDE.md hard rule 3).
+- All caps in `casino/execution/risk.py` are enforced; the runner does not add a parallel sizing path.
+- Kill-switch end-to-end re-verified post-task-36 in `tests/test_kill_switch.py`.
+
 ---
 
 ## 4. Architecture (delta from v1 PRD)

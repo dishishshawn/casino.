@@ -2,7 +2,7 @@
   "master": {
     "tasks": [
       {
-        "id": "1",
+        "id": 1,
         "title": "Initialize Python package with uv",
         "description": "Set up pyproject.toml with uv package manager and configure project metadata for the casino package",
         "details": "Create pyproject.toml with:\n- project.name = 'casino'\n- requires-python = '>=3.11'\n- dependencies: anthropic, alpaca-py, duckdb, yfinance, tiingo, vectorbt, backtrader, loguru, streamlit, pydantic>=2.0, python-dotenv, pyarrow, discord-webhook\n- dev-dependencies: ruff, mypy, pytest, pytest-cov, ipykernel\n- Use `uv init --lib --python 3.11` as starting point\n- Configure [tool.ruff] for line-length=100, target-version='py311'\n- Configure [tool.mypy] with strict=true\n- Add build-system requiring hatchling",
@@ -81,7 +81,7 @@
         "updatedAt": "2026-05-03T06:11:28.733Z"
       },
       {
-        "id": "2",
+        "id": 2,
         "title": "Create casino package structure",
         "description": "Scaffold the complete casino/ directory tree with all submodules as empty __init__.py files",
         "details": "Create directories and files:\n- casino/__init__.py (package root)\n- casino/config.py (stub, will implement in task 3)\n- casino/data/__init__.py, store.py, ingest_edgar.py, ingest_tiingo.py, ingest_transcripts.py\n- casino/llm/__init__.py, client.py, schemas.py, prompts/__init__.py, prompts/earnings_score.py, prompts/headline_class.py, prompts/thesis_gen.py\n- casino/signals/__init__.py, pead.py, llm_earnings.py, regime.py\n- casino/backtest/__init__.py, vbt_research.py, bt_validate.py, walk_forward.py, deflated_sharpe.py\n- casino/execution/__init__.py, alpaca_broker.py, risk.py, reconcile.py\n- casino/monitoring/__init__.py, dashboard.py, alerts.py\n- casino/jobs/__init__.py, earnings_daily.py, news_intraday.py, reconcile_eod.py\n- tests/__init__.py, test_signals.py, test_backtest_no_lookahead.py, test_risk.py\n- notebooks/01_pead_baseline.ipynb (empty notebook)",
@@ -162,7 +162,7 @@
         "updatedAt": "2026-05-03T06:14:24.931Z"
       },
       {
-        "id": "3",
+        "id": 3,
         "title": "Implement centralized configuration module",
         "description": "Build casino/config.py that loads all environment variables from .env with typed accessors and validation",
         "details": "Implementation:\n```python\nfrom pydantic_settings import BaseSettings\nfrom pydantic import Field, field_validator\nfrom functools import lru_cache\n\nclass CasinoConfig(BaseSettings):\n    anthropic_api_key: str = Field(..., alias='ANTHROPIC_API_KEY')\n    alpaca_api_key: str = Field(..., alias='ALPACA_API_KEY')\n    alpaca_secret_key: str = Field(..., alias='ALPACA_SECRET_KEY')\n    alpaca_base_url: str = Field('https://paper-api.alpaca.markets', alias='ALPACA_BASE_URL')\n    tiingo_api_key: str = Field(..., alias='TIINGO_API_KEY')\n    fmp_api_key: str | None = Field(None, alias='FMP_API_KEY')\n    discord_webhook_url: str | None = Field(None, alias='DISCORD_WEBHOOK_URL')\n    \n    # Trading parameters\n    max_risk_per_trade: float = 0.015  # 1.5%\n    max_single_name: float = 0.10  # 10%\n    max_gross_exposure: float = 1.0  # 100%\n    kelly_fraction: float = 0.25  # fractional Kelly\n    \n    class Config:\n        env_file = '.env'\n        case_sensitive = False\n\n@lru_cache()\ndef get_config() -> CasinoConfig:\n    return CasinoConfig()\n```\nAdd pydantic-settings to dependencies.",
@@ -217,7 +217,7 @@
         "updatedAt": "2026-05-03T06:16:21.989Z"
       },
       {
-        "id": "4",
+        "id": 4,
         "title": "Implement DuckDB data store foundation",
         "description": "Build casino/data/store.py with DuckDB connection management, point-in-time query helpers, and Parquet archival",
         "details": "Implement:\n- `get_duckdb_conn()`: context manager returning duckdb.Connection to data/casino.duckdb\n- `create_schema()`: creates tables for OHLCV (ticker, date, open, high, low, close, volume, adj_close), fundamentals (ticker, date, metric_name, value), news (id, ticker, headline, published_at, source, url), filings (ticker, form_type, filing_date, accession_number, url, full_text), transcripts (ticker, event_date, transcript_text, source)\n- `point_in_time_constituents(index: str, as_of_date: datetime) -> list[str]`: returns tickers that were members of S&P 500 or Russell 1000 at specific historical date\n- `archive_to_parquet(table_name: str, output_dir: Path)`: exports table to compressed Parquet\n- All dates stored as UTC timestamps\n- Use PRAGMA for performance tuning (threads=-1, memory_limit='4GB')",
@@ -272,7 +272,7 @@
         "updatedAt": "2026-05-03T06:19:45.346Z"
       },
       {
-        "id": "5",
+        "id": 5,
         "title": "Implement Tiingo data ingestion",
         "description": "Build casino/data/ingest_tiingo.py to fetch OHLCV, fundamentals, and news from Tiingo API into DuckDB",
         "details": "Implement CLI with argparse:\n- `--ticker AAPL --days 30`: fetch last 30 days of OHLCV\n- `--ticker AAPL --start 2020-01-01 --end 2024-12-31`: date range\n- `--fundamentals`: fetch quarterly fundamentals (EPS actual, EPS consensus, revenue, etc.)\n- `--news`: fetch news headlines and metadata\n- Use Tiingo REST API v2 (https://api.tiingo.com/tiingo/daily/{ticker}/prices)\n- Rate limit: 1000 calls/hour on Starter, implement exponential backoff\n- Store raw JSON responses in data/raw/tiingo/ before parsing to DuckDB\n- Convert all timestamps to UTC\n- Use Decimal for prices and shares outstanding\n- Deduplicate on insert (upsert based on ticker+date primary key)",
@@ -327,7 +327,7 @@
         "updatedAt": "2026-05-03T06:22:09.638Z"
       },
       {
-        "id": "6",
+        "id": 6,
         "title": "Implement SEC EDGAR data ingestion",
         "description": "Build casino/data/ingest_edgar.py to fetch 8-K, 10-K, 10-Q, and Form 4 filings from SEC EDGAR into DuckDB",
         "details": "Implement CLI:\n- `--ticker AAPL --form 8-K --days 7`: recent 8-Ks\n- Use sec-edgar-downloader library or direct EDGAR API (https://www.sec.gov/cgi-bin/browse-edgar)\n- Parse filing metadata: accession number, filing date, CIK, form type\n- Extract full text from HTML/SGML and store in filings table\n- For 8-Ks, identify Item 2.02 (earnings announcements) programmatically\n- Rate limit: 10 requests/second per SEC fair access policy\n- Include User-Agent header with contact email\n- Store raw filings in data/raw/edgar/{ticker}/{form}/{accession}.html\n- Handle both old SGML and new inline XBRL formats",
@@ -383,7 +383,7 @@
         "updatedAt": "2026-05-03T06:25:36.596Z"
       },
       {
-        "id": "7",
+        "id": 7,
         "title": "Implement earnings transcript ingestion",
         "description": "Build casino/data/ingest_transcripts.py to fetch earnings call transcripts from Financial Modeling Prep (FMP) API",
         "details": "Implement CLI:\n- `--ticker AAPL --quarter 2024-Q4`: fetch specific quarter\n- `--ticker AAPL --recent 4`: fetch last 4 quarters\n- FMP API endpoint: https://financialmodelingprep.com/api/v3/earning_call_transcript/{ticker}\n- Parse JSON response, extract: ticker, event_date, quarter, year, transcript_content\n- Store in transcripts table with source='FMP'\n- Fallback: if FMP unavailable, scrape from free sources (SeekingAlpha, Motley Fool) with robots.txt compliance\n- Clean transcript text: remove ads, navigation, normalize whitespace\n- Split into sections: prepared_remarks, qa_session for more targeted LLM prompting\n- Rate limit: 250 calls/day on FMP Starter",
@@ -439,7 +439,7 @@
         "updatedAt": "2026-05-03T06:58:04.015Z"
       },
       {
-        "id": "8",
+        "id": 8,
         "title": "Implement LLM client with prompt caching and cost tracking",
         "description": "Build casino/llm/client.py as the single gateway to Anthropic API with caching, retries, structured output, and audit logging",
         "details": "Implement:\n- `AnthropicClient` class wrapping anthropic.Anthropic()\n- `generate_structured(prompt: str, system: str, schema: Type[BaseModel], model: str = 'claude-sonnet-4-20250514', temperature: float = 0.0) -> BaseModel`: sends request with cache_control on system prompt, validates response against Pydantic schema\n- Models: sonnet='claude-sonnet-4-20250514', haiku='claude-haiku-4-20250514', opus='claude-opus-4-20250514'\n- Retry logic: exponential backoff on 429/500/502/503/504, max 3 retries\n- Cost calculation: track input_tokens, cache_creation_tokens, cache_read_tokens, output_tokens; compute USD cost using 2026 pricing from PRD\n- Audit log: write to SQLite table llm_calls (id, timestamp, prompt_hash, model, input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms, response_json, error)\n- Create SQLite schema in store.py for llm_calls table\n- Thread-safe with connection pooling",
@@ -496,7 +496,7 @@
         "updatedAt": "2026-05-03T06:55:34.232Z"
       },
       {
-        "id": "9",
+        "id": 9,
         "title": "Define Pydantic schemas for LLM structured outputs",
         "description": "Build casino/llm/schemas.py with all Pydantic models for validating LLM responses",
         "details": "Define schemas:\n```python\nfrom pydantic import BaseModel, Field, field_validator\nfrom typing import Literal\n\nclass EarningsScore(BaseModel):\n    beat_quality: int = Field(..., ge=-2, le=2, description='Clean beat (+2) to noisy miss (-2)')\n    guidance_tone: int = Field(..., ge=-2, le=2, description='Bullish (+2) to bearish (-2)')\n    qa_defensiveness: int = Field(..., ge=-2, le=2, description='Confident (+2) to evasive (-2)')\n    confidence: float = Field(..., ge=0.0, le=1.0, description='Model confidence in scoring')\n    reasoning: str = Field(..., max_length=500, description='Justification for scores')\n    \n    @property\n    def composite_score(self) -> float:\n        return (self.beat_quality + self.guidance_tone + self.qa_defensiveness) / 6.0  # normalize to [-1, 1]\n\nclass HeadlineClassification(BaseModel):\n    sentiment: Literal['positive', 'negative', 'neutral']\n    relevance: Literal['high', 'medium', 'low']\n    confidence: float = Field(..., ge=0.0, le=1.0)\n    \nclass ThesisGeneration(BaseModel):\n    thesis: str = Field(..., max_length=2000)\n    conviction: Literal['high', 'medium', 'low']\n    risks: list[str] = Field(..., max_items=5)\n```",
@@ -552,7 +552,7 @@
         "updatedAt": "2026-05-03T06:55:42.198Z"
       },
       {
-        "id": "10",
+        "id": 10,
         "title": "Implement earnings transcript scoring prompt",
         "description": "Build casino/llm/prompts/earnings_score.py with the core v1 strategy LLM call for transcript analysis",
         "details": "Implement:\n- `score_earnings_transcript(ticker: str, transcript: str, anonymize: bool = True) -> EarningsScore`: wrapper around AnthropicClient.generate_structured\n- System prompt (cached): \"You are an expert equities analyst evaluating earnings call transcripts. Rate beat quality, guidance tone, and Q&A defensiveness on -2 to +2 scales. Be skeptical of accounting gimmicks and vague guidance.\"\n- User prompt template: \"Analyze this <QUARTER> earnings call for <COMPANY>:\\n\\n{transcript}\\n\\nProvide structured scores.\"\n- If anonymize=True: replace ticker and company name with '<COMPANY>' and remove specific dates from transcript\n- Truncate transcript to fit in context (keep first 60% of prepared remarks + last 80% of Q&A to prioritize guidance and defensive questions)\n- Use Sonnet 4.6 by default\n- Temperature=0.3 for slight variance in scoring",
@@ -605,7 +605,7 @@
         "updatedAt": "2026-05-03T07:07:38.096Z"
       },
       {
-        "id": "11",
+        "id": 11,
         "title": "Implement headline classification prompt",
         "description": "Build casino/llm/prompts/headline_class.py for high-volume news sentiment classification using Haiku",
         "details": "Implement:\n- `classify_headline(ticker: str, headline: str, anonymize: bool = True) -> HeadlineClassification`\n- System prompt (cached): \"Classify news headlines for trading relevance and sentiment. Focus on material events (earnings, M&A, regulatory), ignore noise.\"\n- User prompt: \"Headline: {headline}\\n\\nClassify sentiment and relevance for <COMPANY>.\"\n- Use Haiku 4.5 for cost efficiency (10x cheaper than Sonnet for this task)\n- Temperature=0.0 for consistency\n- Batch non-urgent calls via Anthropic Batch API (50% cost saving) for end-of-day news digests",
@@ -661,7 +661,7 @@
         "updatedAt": "2026-05-03T07:07:38.151Z"
       },
       {
-        "id": "12",
+        "id": 12,
         "title": "Implement baseline PEAD signal (SUE)",
         "description": "Build casino/signals/pead.py to compute classical Standardized Unexpected Earnings (SUE) without LLM",
         "details": "Implement:\n- `compute_sue(ticker: str, actual_eps: Decimal, consensus_eps: Decimal, as_of_date: datetime) -> float`:\n  - surprise = actual_eps - consensus_eps\n  - historical_std = std_dev of past 8 quarters of surprises for this ticker\n  - sue = surprise / historical_std\n- `get_earnings_surprises(ticker: str, lookback_quarters: int = 8) -> pd.DataFrame`: query DuckDB for historical EPS surprises\n- Handle edge cases: IPOs with < 8 quarters (use industry std), missing consensus (skip), restatements (use as-reported)\n- Return None if insufficient data\n- All calculations use Decimal until final SUE score",
@@ -716,7 +716,7 @@
         "updatedAt": "2026-05-03T06:28:01.095Z"
       },
       {
-        "id": "13",
+        "id": 13,
         "title": "Implement combined SUE × LLM signal",
         "description": "Build casino/signals/llm_earnings.py to merge classical SUE with Claude transcript scoring per v1 strategy",
         "details": "Implement:\n- `combined_earnings_signal(ticker: str, actual_eps: Decimal, consensus_eps: Decimal, transcript: str, as_of_date: datetime, anonymize: bool = True) -> dict`:\n  - sue_score = compute_sue(ticker, actual_eps, consensus_eps, as_of_date)\n  - llm_score = score_earnings_transcript(ticker, transcript, anonymize).composite_score\n  - combined = 0.5 * normalize(sue_score) + 0.5 * llm_score\n  - return {'sue': sue_score, 'llm': llm_score, 'combined': combined, 'confidence': llm.confidence, 'timestamp': utc_now()}\n- Normalization: sue_score / 3.0 to map typical [-6, 6] range to [-2, 2] matching LLM scale\n- Trade filter: only return signal if sue_score and llm_score have same sign AND both exceed thresholds (|sue| > 1.0, |llm| > 0.3)\n- Cache LLM calls by prompt hash to avoid re-scoring same transcript",
@@ -772,7 +772,7 @@
         "updatedAt": "2026-05-03T07:10:12.952Z"
       },
       {
-        "id": "14",
+        "id": 14,
         "title": "Implement market regime filter",
         "description": "Build casino/signals/regime.py with simple bull/bear regime detection to gate trading",
         "details": "Implement:\n- `get_market_regime(as_of_date: datetime) -> Literal['bull', 'bear', 'neutral']`:\n  - Fetch SPY daily closes from DuckDB\n  - sma_200 = 200-day simple moving average\n  - If SPY close > sma_200 * 1.02: 'bull'\n  - If SPY close < sma_200 * 0.98: 'bear'\n  - Else: 'neutral'\n- `should_trade_long(regime: str) -> bool`: True if bull or neutral\n- `should_trade_short(regime: str) -> bool`: True if bear or neutral (conservative: only short in confirmed bear)\n- Log regime changes to SQLite regime_log table for monitoring\n- Update regime daily in reconcile_eod job",
@@ -825,7 +825,7 @@
         "updatedAt": "2026-05-03T16:24:39.682Z"
       },
       {
-        "id": "15",
+        "id": 15,
         "title": "Implement vectorbt research backtest harness",
         "description": "Build casino/backtest/vbt_research.py for fast parameter sweeps over signal configurations using vectorbt",
         "details": "Implement:\n- `VectorBacktest` class wrapping vectorbt.Portfolio\n- `run_parameter_sweep(signal_func: Callable, param_grid: dict, universe: list[str], start_date: datetime, end_date: datetime) -> pd.DataFrame`:\n  - Grid search over parameters (e.g., SUE threshold, LLM confidence, hold period)\n  - For each config, compute signal scores for all tickers × dates\n  - Generate long/short positions based on top/bottom quintiles\n  - Run vectorized backtest with vectorbt\n  - Return results: sharpe, sortino, max_drawdown, win_rate, total_return for each config\n- Transaction costs: 7 bps per round-trip (configurable)\n- Equal weighting, max 10 positions per side\n- Daily rebalancing\n- Output to CSV: backtests/results/sweep_{timestamp}.csv",
@@ -880,7 +880,7 @@
         "updatedAt": "2026-05-03T06:31:20.603Z"
       },
       {
-        "id": "16",
+        "id": 16,
         "title": "Implement backtrader event-driven validation",
         "description": "Build casino/backtest/bt_validate.py for realistic event-driven backtesting with backtrader to validate vectorbt findings",
         "details": "Implement:\n- `EventBacktest` class extending backtrader.Strategy\n- `run_validation(signal_func: Callable, config: dict, universe: list[str], start_date: datetime, end_date: datetime) -> dict`:\n  - Event-driven simulation: signals generated on earnings dates, orders placed next trading day\n  - Realistic slippage model: 5 bps on liquid stocks (vol > 1M shares/day), 15 bps on mid-caps\n  - Commission: 0.5 bps (Alpaca Pro pricing)\n  - Fill simulation: limit orders at previous close, partial fills if volume insufficient\n  - Track intraday stops and exits\n  - Return metrics: same as vectorbt plus fill_rate, avg_slippage, max_intraday_drawdown\n- Must match vectorbt Sharpe within 20% on same signal/dates (if not, investigate divergence)\n- Output to JSON: backtests/results/validation_{timestamp}.json",
@@ -936,7 +936,7 @@
         "updatedAt": "2026-05-03T07:04:11.046Z"
       },
       {
-        "id": "17",
+        "id": 17,
         "title": "Implement walk-forward cross-validation harness",
         "description": "Build casino/backtest/walk_forward.py to prevent overfitting via strict temporal CV",
         "details": "Implement:\n- `walk_forward_cv(signal_func: Callable, param_grid: dict, universe: list[str], start_date: datetime, end_date: datetime, train_months: int = 12, test_months: int = 3) -> pd.DataFrame`:\n  - Split timeline into overlapping train/test windows\n  - For each window: run parameter sweep on train, select best config by Sharpe, test on out-of-sample test period\n  - Record: train_sharpe, test_sharpe, selected_params, test_period_start, test_period_end\n  - Aggregate across all windows: mean test Sharpe, std test Sharpe, degradation (train - test)\n- No lookahead: test period must be strictly after train period\n- No data leakage: universe constituents determined at start of each test period\n- Output: backtests/results/walk_forward_{timestamp}.csv with per-window and aggregate stats",
@@ -1017,7 +1017,7 @@
         "updatedAt": "2026-05-03T06:35:06.457Z"
       },
       {
-        "id": "18",
+        "id": 18,
         "title": "Implement Deflated Sharpe Ratio calculation",
         "description": "Build casino/backtest/deflated_sharpe.py to correct for multiple testing bias per Bailey & Lopez de Prado",
         "details": "Implement:\n- `deflated_sharpe(sharpe: float, n_trials: int, n_observations: int, skew: float, kurtosis: float) -> float`:\n  - Compute deflated SR using Bailey & Lopez de Prado formula\n  - SR_deflated = SR_observed - sqrt(V) * Z_{1-α}\n  - V = variance inflation from trials: V ≈ (n_trials - 1) / n_observations\n  - Adjust for non-normality using skew and kurtosis\n- `haircut_sharpe(observed_sr: float, backtest_metadata: dict) -> dict`:\n  - Extract n_trials from walk-forward runs (number of param configs tested)\n  - Extract n_observations (number of trades)\n  - Compute returns distribution moments from backtest\n  - Return: {'observed': observed_sr, 'deflated': deflated_sr, 'p_value': p_value, 'is_significant': deflated_sr > 0}\n- Statistical significance threshold: p < 0.05 (95% confidence)\n- Output: backtests/results/deflated_sharpe_{timestamp}.json",
@@ -1072,7 +1072,7 @@
         "updatedAt": "2026-05-03T06:37:13.550Z"
       },
       {
-        "id": "19",
+        "id": 19,
         "title": "Implement LLM look-ahead bias test gate",
         "description": "Build tests/test_backtest_no_lookahead.py as the critical release gate preventing temporal leakage in LLM calls",
         "details": "Implement pytest fixtures and tests:\n- `test_llm_prompts_anonymized_in_backtest_mode()`: assert all LLM calls during backtest have anonymize=True\n- `test_llm_prompts_no_future_dates()`: parse all LLM call audit logs, extract dates from prompts via regex, assert no date > backtest_start_date appears in any prompt during backtest runs\n- `test_backtest_start_after_model_cutoff()`: assert all backtests start after 2024-04-01 (Sonnet 4.6 knowledge cutoff) or use anonymized mode\n- Mock LLM client to capture prompts\n- Fail loudly with detailed error message showing offending prompt and date\n- Mark as critical: add pytest.mark.release_gate\n- Run in CI on every PR",
@@ -1129,7 +1129,7 @@
         "updatedAt": "2026-05-03T07:12:41.760Z"
       },
       {
-        "id": "20",
+        "id": 20,
         "title": "Implement Alpaca broker wrapper",
         "description": "Build casino/execution/alpaca_broker.py for paper and live trading via Alpaca API",
         "details": "Implement:\n- `AlpacaBroker` class wrapping alpaca.trading.TradingClient\n- `submit_order(ticker: str, side: Literal['buy', 'sell'], qty: int, order_type: Literal['market', 'limit'], limit_price: Decimal | None) -> Order`: submit order, return order object with id, status, timestamps\n- `get_positions() -> list[Position]`: current open positions with qty, avg_entry_price, current_price, unrealized_pnl\n- `get_account() -> Account`: cash, portfolio_value, buying_power\n- `cancel_order(order_id: str)`: cancel pending order\n- `close_position(ticker: str)`: market sell entire position\n- `liquidate_all()`: close all positions (kill switch component)\n- WebSocket listener for order fills: `listen_fills(callback: Callable)` updates internal state on fill\n- Store all orders in SQLite orders table: id, ticker, side, qty, order_type, limit_price, status, submitted_at, filled_at, fill_price, commission\n- Handle order rejections, partial fills\n- Mode switching: paper vs live via config.alpaca_base_url",
@@ -1182,7 +1182,7 @@
         "updatedAt": "2026-05-03T16:24:46.261Z"
       },
       {
-        "id": "21",
+        "id": 21,
         "title": "Implement risk management and kill switch",
         "description": "Build casino/execution/risk.py as the authoritative gatekeeper for position sizing, exposure limits, stops, and emergency shutdown",
         "details": "Implement:\n- `calculate_position_size(signal_score: float, account_value: Decimal, kelly_fraction: float, max_risk_per_trade: float) -> int`: fractional Kelly sizing with hard caps\n  - kelly_optimal = (signal_score * win_rate - (1 - win_rate)) / avg_win\n  - position_size = account_value * kelly_fraction * kelly_optimal\n  - Cap at max_risk_per_trade * account_value (1.5% default)\n  - Round to integer shares\n- `check_exposure_limits(proposed_positions: dict[str, int], account_value: Decimal) -> bool`: validate total gross ≤ 100%, single name ≤ 10%\n- `set_stop_loss(ticker: str, entry_price: Decimal, side: Literal['long', 'short']) -> Decimal`: calculate stop price (5% for long, 4% for short)\n- `submit_bracket_order(ticker: str, side: str, qty: int, entry_price: Decimal, stop_price: Decimal)`: submit entry + broker-side stop as bracket\n- `KILL_SWITCH()`: disable order entry flag, call broker.liquidate_all(), send Discord alert, log to critical severity\n- Store kill switch state in SQLite: is_active, activated_at, reason\n- All limits from config.py, no hardcoded values",
@@ -1235,7 +1235,7 @@
         "updatedAt": "2026-05-03T16:26:16.913Z"
       },
       {
-        "id": "22",
+        "id": 22,
         "title": "Implement broker reconciliation",
         "description": "Build casino/execution/reconcile.py to detect drift between internal book and broker positions",
         "details": "Implement:\n- `reconcile_positions(as_of: datetime) -> dict`:\n  - internal_positions = query SQLite orders table, compute current holdings from fill history\n  - broker_positions = broker.get_positions()\n  - Compare: for each ticker, check qty, avg_price match\n  - mismatches = [(ticker, internal_qty, broker_qty, delta) for deltas > 0]\n  - If mismatches: log warning, send Discord alert, write to reconciliation_errors table\n  - Return: {'matched': bool, 'mismatches': list, 'timestamp': as_of}\n- `get_source_of_truth_positions() -> dict[str, Position]`: always return broker positions (broker is truth, not internal DB)\n- `write_daily_pnl(date: datetime)`: compute realized + unrealized P&L for the day, store in pnl_log table\n- Run automatically in reconcile_eod job",
@@ -1288,7 +1288,7 @@
         "updatedAt": "2026-05-03T16:26:24.544Z"
       },
       {
-        "id": "23",
+        "id": 23,
         "title": "Implement earnings daily cron job",
         "description": "Build casino/jobs/earnings_daily.py as the main pre-market signal generation and order submission pipeline",
         "details": "Implement CLI entrypoint:\n- Run daily at 7:00 AM ET (before market open)\n- Fetch today's earnings releases from Tiingo/EDGAR (8-K filings with Item 2.02)\n- For each ticker with earnings today:\n  - Fetch transcript (if available, else wait for next run)\n  - Fetch actual EPS and consensus from fundamentals DB\n  - Compute combined_earnings_signal()\n  - If signal strong enough and regime allows:\n    - Calculate position size via risk.calculate_position_size()\n    - Check exposure limits\n    - Submit bracket order for market open\n- Log all signals (even weak ones not traded) to signals_log table for analysis\n- Send Discord summary: 'Earnings today: 12 tickers | Signals generated: 5 | Orders submitted: 3 (2 long, 1 short)'\n- Handle errors gracefully: log, alert, continue to next ticker\n- Dry-run mode for testing: --dry-run flag skips order submission",
@@ -1343,7 +1343,7 @@
         "updatedAt": "2026-05-03T16:39:13.510Z"
       },
       {
-        "id": "24",
+        "id": 24,
         "title": "Implement intraday news monitoring job",
         "description": "Build casino/jobs/news_intraday.py for real-time headline scanning and quick-react signal generation",
         "details": "Implement CLI entrypoint:\n- Run every 15 minutes during market hours (9:30 AM - 4:00 PM ET)\n- Fetch latest news from Tiingo for all positions + watchlist\n- For each headline since last run:\n  - Classify with classify_headline() using Haiku\n  - If high relevance + strong sentiment: compute headline_score\n  - If existing position: check if headline contradicts thesis, consider exit\n  - If watchlist ticker: flag for manual review\n- Log headlines and classifications to news_log table\n- No automated trades (v1 is not intraday strategy), only alerts\n- Send Discord alert for high-relevance negative news on open positions\n- Use Batch API for non-urgent classifications (process in evening)",
@@ -1397,7 +1397,7 @@
         "updatedAt": "2026-05-03T16:39:21.532Z"
       },
       {
-        "id": "25",
+        "id": 25,
         "title": "Implement end-of-day reconciliation job",
         "description": "Build casino/jobs/reconcile_eod.py to verify positions, compute P&L, check exposure, and update regime daily",
         "details": "Implement CLI entrypoint:\n- Run daily at 4:30 PM ET (after market close)\n- `reconcile_positions(datetime.now(UTC))`: check internal vs broker\n- `write_daily_pnl(date.today())`: compute and store today's P&L\n- Update market regime: `regime = get_market_regime(date.today())`\n- Check exposure limits: `check_exposure_limits()`, alert if violated\n- Compute rolling 60-day Sharpe from pnl_log\n- Check LLM spend today vs monthly budget (config.max_monthly_llm_spend)\n- Send Discord end-of-day summary: 'EOD | P&L: +$127 (+1.2%) | Open positions: 8 | Sharpe (60d): 0.81 | LLM spend: $2.14/$100 MTD | Regime: bull'\n- If drawdown from high-water mark > 10%: send alert\n- If 3 consecutive losing days: send alert\n- Archive old data: Parquet export of filled orders older than 90 days",
@@ -1451,7 +1451,7 @@
         "updatedAt": "2026-05-03T16:39:29.614Z"
       },
       {
-        "id": "26",
+        "id": 26,
         "title": "Implement Streamlit monitoring dashboard",
         "description": "Build casino/monitoring/dashboard.py as the main UI for monitoring system health and performance",
         "details": "Implement Streamlit app with pages:\n- **Overview**: Today/MTD/YTD P&L, current drawdown, open positions count, regime indicator\n- **Positions**: Table of open positions (ticker, side, qty, entry_price, current_price, unrealized_pnl, days_held, stop_price)\n- **Recent Signals**: Last 50 signals generated (date, ticker, sue_score, llm_score, combined, action, reasoning)\n- **LLM Calls**: Audit log of last 100 LLM calls (timestamp, model, input_tokens, cached_tokens, output_tokens, cost_usd, latency_ms, cumulative_cost_today)\n- **Performance**: Rolling Sharpe chart (30/60/90 day), cumulative P&L curve, drawdown chart, win rate, avg win/loss\n- **System Health**: Reconciliation status (last run, mismatches), broker connection status, data freshness (last OHLCV update, last transcript), kill switch status\n- Auto-refresh every 60 seconds\n- Export data: button to download positions/signals/llm_calls as CSV\n- Run with: `uv run streamlit run casino/monitoring/dashboard.py`",
@@ -1503,7 +1503,7 @@
         "updatedAt": "2026-05-03T16:42:41.181Z"
       },
       {
-        "id": "27",
+        "id": 27,
         "title": "Implement Discord webhook alerts",
         "description": "Build casino/monitoring/alerts.py for mobile push notifications on critical events",
         "details": "Implement:\n- `send_alert(message: str, severity: Literal['info', 'warning', 'critical'])`: send to Discord webhook with color coding (green/yellow/red embeds)\n- `AlertManager` class with rate limiting (max 10 alerts/hour to avoid spam)\n- Alert triggers:\n  - Order fills: 'Filled: BUY 50 AAPL @ $175.23'\n  - Drawdown > 10%: 'ALERT: Drawdown 12.3% from high-water mark'\n  - Daily LLM spend > $5: 'LLM spend today: $6.23'\n  - Reconciliation mismatch: 'Position mismatch: AAPL internal=50 broker=48'\n  - Unhandled exceptions: full traceback\n  - Kill switch activation: 'KILL SWITCH ACTIVATED: {reason}'\n- Format messages for mobile readability (short, front-load key info)\n- Include links to dashboard for details\n- Graceful degradation if webhook URL not configured (log locally only)",
@@ -1556,7 +1556,7 @@
         "updatedAt": "2026-05-03T16:42:48.118Z"
       },
       {
-        "id": "28",
+        "id": 28,
         "title": "Create comprehensive signal and risk unit tests",
         "description": "Build tests/test_signals.py and tests/test_risk.py with high coverage of core logic",
         "details": "tests/test_signals.py:\n- Test SUE calculation with known examples\n- Test insufficient history handling\n- Test combined signal sign agreement filter\n- Test normalization math\n- Test regime filter gating\n\ntests/test_risk.py:\n- Test Kelly sizing edge cases (zero score, extreme score)\n- Test position size caps enforced\n- Test exposure limits (gross, single-name)\n- Test stop-loss calculation\n- Test kill switch state management\n- Test bracket order construction\n\nUse pytest fixtures for mock data, parametrize tests for multiple scenarios. Target 90%+ coverage of casino/signals/ and casino/execution/risk.py. Use pytest-cov to measure.",
@@ -1619,7 +1619,7 @@
         "updatedAt": "2026-05-03T17:01:42.710Z"
       },
       {
-        "id": "29",
+        "id": 29,
         "title": "Set up GitHub Actions CI pipeline",
         "description": "Create .github/workflows/ci.yml to run linting, type checking, and tests on every push and PR",
         "details": "Implement workflow:\n- Trigger: on push to main, on all PRs\n- Jobs:\n  1. **Lint**: `uv run ruff check .` (fail on errors)\n  2. **Format**: `uv run ruff format --check .` (fail if unformatted)\n  3. **Type**: `uv run mypy casino` (strict mode, fail on errors)\n  4. **Test**: `uv run pytest --cov=casino --cov-report=xml --cov-report=term` (fail if coverage < 80%)\n  5. **Look-ahead gate**: `uv run pytest tests/test_backtest_no_lookahead.py -v` (critical release gate)\n- Use actions/setup-python@v5 with Python 3.11\n- Cache uv dependencies with actions/cache\n- Upload coverage to Codecov (optional)\n- Badge in README showing build status\n- Require all checks pass before merge (branch protection rule)",
@@ -1672,7 +1672,7 @@
         "updatedAt": "2026-05-03T17:05:32.385Z"
       },
       {
-        "id": "30",
+        "id": 30,
         "title": "Create baseline PEAD research notebook",
         "description": "Build notebooks/01_pead_baseline.ipynb to validate pure SUE signal before adding LLM",
         "details": "Notebook sections:\n1. Data loading: fetch 2015-2023 earnings surprises from DuckDB\n2. SUE calculation: compute for all S&P 500 × earnings dates\n3. Quintile analysis: plot returns by SUE quintile at 5/10/20 day horizons\n4. Vectorbt backtest: run baseline long/short with transaction costs\n5. Performance stats: Sharpe, max drawdown, win rate, monthly returns heatmap\n6. Validation: compare to academic literature (expected Sharpe 0.6-0.8)\n7. Export: save best config parameters to backtests/baseline_config.json for use in combined signal\n\nExpected outcome: reproduce ~6% annualized edge, Sharpe ~0.7, validating infrastructure before LLM addition. If not achieved, debug data quality or implementation bugs.",
@@ -1743,7 +1743,7 @@
         "updatedAt": "2026-05-03T06:40:40.307Z"
       },
       {
-        "id": "31",
+        "id": 31,
         "title": "Document deployment and operations runbook",
         "description": "Create DEPLOYMENT.md with VPS setup, cron configuration, and operational procedures",
         "details": "Document:\n- **VPS Setup**: Hetzner CX11 ($5/mo) or equivalent, Ubuntu 24.04 LTS, uv installation, git clone, .env configuration\n- **Cron Schedule**:\n  - `0 11 * * 1-5 cd /home/casino && uv run python -m casino.jobs.earnings_daily` (7 AM ET = 11 UTC in winter)\n  - `30,45 13-20 * * 1-5 cd /home/casino && uv run python -m casino.jobs.news_intraday` (every 15 min during market)\n  - `30 20 * * 1-5 cd /home/casino && uv run python -m casino.jobs.reconcile_eod` (4:30 PM ET = 20:30 UTC)\n- **Systemd Service**: casino-dashboard.service for persistent Streamlit (auto-restart on crash)\n- **Monitoring**: logrotate config, disk space alerts (data/ can grow to 10+ GB)\n- **Backup**: daily DuckDB backup to cloud storage (Backblaze B2 or similar)\n- **Kill Switch Drill**: monthly test procedure, verify < 60 second execution\n- **Incident Response**: what to do when Discord alerts fire\n- **Secrets Management**: .env encryption at rest, rotation schedule\n- **Cost Tracking**: monthly spend checklist (Tiingo, Claude, VPS, FMP)",
@@ -1819,7 +1819,7 @@
         "updatedAt": "2026-05-03T17:05:39.097Z"
       },
       {
-        "id": "32",
+        "id": 32,
         "title": "Run Phase 1 validation: baseline PEAD backtest",
         "description": "Execute full baseline SUE backtest on historical data to validate infrastructure and edge before adding LLM complexity",
         "details": "Validation steps:\n1. Ingest 2015-2023 data: OHLCV, earnings surprises, S&P 500 constituents (point-in-time)\n2. Run vectorbt parameter sweep: SUE thresholds [0.5, 1.0, 1.5, 2.0], hold periods [5, 10, 15, 20 days]\n3. Select best config by Sharpe\n4. Validate in backtrader event-driven mode\n5. Run walk-forward CV with 12-month train, 3-month test\n6. Compute Deflated Sharpe with trial count\n7. Document results in backtests/phase1_validation_report.md\n\nSuccess criteria (from PRD §11):\n- Deflated Sharpe > 0 after walk-forward\n- Reproduce documented PEAD edge (~5-8% annualized)\n- Vectorbt and backtrader Sharpe within 20%\n\nIf failure: debug data quality, signal logic, or conclude edge has decayed (pause project per PRD §1.3)",
@@ -1829,7 +1829,7 @@
           "18",
           "30"
         ],
-        "status": "pending",
+        "status": "cancelled",
         "subtasks": [
           {
             "id": 1,
@@ -1869,10 +1869,11 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on run phase 1 validation: baseline pead backtest."
+        "expansionPrompt": "Break down this task with a focus on run phase 1 validation: baseline pead backtest.",
+        "updatedAt": "2026-05-07T20:46:59.768Z"
       },
       {
-        "id": "33",
+        "id": 33,
         "title": "Run Phase 2 validation: SUE × LLM combined signal",
         "description": "Execute full backtest of combined signal with LLM transcript scoring, restricted to post-knowledge-cutoff dates",
         "details": "Validation steps:\n1. Ingest transcripts for 2024-05-01 onwards (after Sonnet 4.6 cutoff 2024-04-01)\n2. For each earnings event: compute combined_earnings_signal() with anonymization\n3. Run Monte Carlo: 5 runs per transcript at temperature=0.3, measure score variance\n4. Backtest combined signal in vectorbt and backtrader\n5. Compare to Phase 1 baseline: improvement in Sharpe, reduction in false positives\n6. Walk-forward CV on 2024-05-01 to 2025-12-31 data\n7. Compute Deflated Sharpe accounting for all Phase 1 + Phase 2 trials\n8. Cost analysis: LLM spend per trade, break-even account size\n9. Document in backtests/phase2_validation_report.md\n\nSuccess criteria (from PRD §11):\n- Deflated Sharpe > 0 (ideally > 0.5)\n- Combined signal Sharpe > baseline SUE Sharpe by ≥ 0.2\n- Cost per trade < 0.1% of position size\n- Look-ahead test passes (tests/test_backtest_no_lookahead.py green)\n\nIf failure: do NOT proceed to Phase 3 paper trading",
@@ -1883,7 +1884,7 @@
           "13",
           "19"
         ],
-        "status": "pending",
+        "status": "cancelled",
         "subtasks": [
           {
             "id": 1,
@@ -1958,10 +1959,11 @@
         ],
         "complexity": 9,
         "recommendedSubtasks": 6,
-        "expansionPrompt": "Break down into: 1) Ingest transcripts for 2024-05-01+ and verify coverage for S&P 500 earnings events, 2) Implement Monte Carlo scoring (5 runs per transcript at temp=0.3) with variance tracking, 3) Run combined signal backtest in vectorbt and backtrader with comparison to Phase 1 baseline, 4) Execute walk-forward CV on 2024-2025 data with LLM call cost tracking, 5) Compute Deflated Sharpe accounting for all trials from both phases, 6) Generate phase2_validation_report.md with go/no-go recommendation for Phase 3. Ensure test_backtest_no_lookahead.py passes throughout."
+        "expansionPrompt": "Break down into: 1) Ingest transcripts for 2024-05-01+ and verify coverage for S&P 500 earnings events, 2) Implement Monte Carlo scoring (5 runs per transcript at temp=0.3) with variance tracking, 3) Run combined signal backtest in vectorbt and backtrader with comparison to Phase 1 baseline, 4) Execute walk-forward CV on 2024-2025 data with LLM call cost tracking, 5) Compute Deflated Sharpe accounting for all trials from both phases, 6) Generate phase2_validation_report.md with go/no-go recommendation for Phase 3. Ensure test_backtest_no_lookahead.py passes throughout.",
+        "updatedAt": "2026-05-07T20:47:15.342Z"
       },
       {
-        "id": "34",
+        "id": 34,
         "title": "Run Phase 3: 90-day paper trading validation",
         "description": "Deploy system to VPS, run against Alpaca paper account for one full earnings quarter, monitor live vs backtest divergence",
         "details": "Deployment and monitoring:\n1. Deploy to Hetzner VPS following DEPLOYMENT.md\n2. Configure cron jobs for earnings_daily, news_intraday, reconcile_eod\n3. Start Streamlit dashboard systemd service\n4. Begin paper trading: run live for 90 days (one full earnings quarter)\n5. Weekly review:\n   - Compare live Sharpe to Phase 2 backtest expectation\n   - Check reconciliation errors (should be zero)\n   - Review LLM cost trends (should be ≤ $50/mo)\n   - Check kill switch readiness (monthly drill)\n6. Document all incidents, fill quality, slippage divergence\n7. Final report: backtests/phase3_paper_trading_report.md with live vs backtest comparison\n\nSuccess criteria (from PRD §1.3):\n- Live paper Sharpe within 50% of backtest Sharpe\n- No reconciliation errors\n- Monthly cost ≤ $80\n- Drawdown < 35%\n- Kill switch tested and functional\n\nIf failure: do NOT deploy real money. Re-examine hypothesis or pause project.",
@@ -1975,7 +1977,7 @@
           "26",
           "27"
         ],
-        "status": "pending",
+        "status": "cancelled",
         "subtasks": [
           {
             "id": 1,
@@ -2014,17 +2016,123 @@
         ],
         "complexity": 5,
         "recommendedSubtasks": 3,
-        "expansionPrompt": "Break down this task with a focus on run phase 3: 90-day paper trading validation."
+        "expansionPrompt": "Break down this task with a focus on run phase 3: 90-day paper trading validation.",
+        "updatedAt": "2026-05-07T20:47:30.218Z"
+      },
+      {
+        "id": 35,
+        "title": "Backtrader event-driven validator on TSMOM",
+        "description": "Extend casino/backtest/bt_validate.py with TSMomEventBacktest Strategy class taking target weights (not scores), monthly rebalance. Gate before Alpaca paper. Catches signal/execution alignment, total-return vs price-return on TLT/IEF/EFA/EEM, next-open vs same-close fill bias, dividend handling.",
+        "details": "New TSMomEventBacktest in casino/backtest/bt_validate.py. Inputs: weight panel from ts_momentum.compute_tsmom_panel; OHLCV via casino.data.store. Use Backtrader Cerebro with 12bps RT commission, monthly rebal on signal-day+1 next-open fills, dividend reinvestment for TLT/IEF/EFA/EEM. Acceptance: event-driven Sharpe within 10pct of vbt headline 0.704 on strict-OOS 2006-04 to 2026 universe (SPY/QQQ/IWM/EFA/EEM/TLT/IEF/GLD/DBC/USO). Run via 'uv run python -m casino.backtest.bt_validate --strategy tsmom'. Test: tests/test_bt_tsmom_validate.py asserts vbt-vs-bt Sharpe delta <0.07.",
+        "testStrategy": "",
+        "status": "done",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 36,
+        "title": "Wire TSMOM to Alpaca paper trading (30-day cap)",
+        "description": "Branch C TSMOM-alone paper-trade runner with binding 30-day cap and binary COMMIT-or-KILL verdict on day 30. Original 3-month paper window (PRD section 6.3) was overridden by the 2026-05-07 amendment after task 37 (sensitivity grid) FAIL'd at 56th percentile and task 38 (carry) FAIL'd standalone. User decision verbatim: 'don't add a leg, paper-trade TSMOM alone, 30-day cap on Branch C, then commit or kill.' See PRD section 3 amendment dated 2026-05-07.",
+        "details": "Modules: (1) casino/execution/tsmom_runner.py — manual-run-only monthly rebal, paper-only assertion (refuses non-paper Alpaca URL), forces mode='long_only' (cash-account constraint), routes every order through casino.execution.risk.submit_order which sends a bracket order with broker-side stop at -10% (CLAUDE.md hard rule 3). Caps: gross<=1.0, single-name<=10pct, vol-target 10pct. (2) casino/execution/tsmom_clock_check.py — daily kill-criteria monitor + day-30 verdict CLI ('--verdict' flag). Kill criteria: drawdown>10pct, single-day P&L drop>5pct, gross/single-name cap violation, reconcile drift>1pct NAV, KS-test p<0.01 vs reports/tsmom_backtest_returns.csv at day>=14. Day-30 COMMIT preconditions (all required): zero kill_event rows, >=1 rebal completed, drift now <0.5pct, paper Sharpe >= -0.2, KS p > 0.10. Otherwise KILL. (3) casino/execution/paper_clock.py — SQLite tables paper_clock / kill_event / rebal_event in state.sqlite. (4) casino/monitoring/dashboard.py — 30-day-cap panel (days/30 progress, paper cum P&L, latest target weights, reconcile drift flagged red >0.5pct, kill-criterion status table). Tests: tests/test_tsmom_runner.py, tests/test_tsmom_clock_check.py, tests/test_paper_clock.py, tests/test_kill_switch.py (re-verifies CLAUDE.md hard rule 4 end-to-end), tests/test_dashboard.py extended. The runner does NOT cron-schedule itself; the 30-day clock starts when the operator first invokes 'uv run python -m casino.execution.tsmom_runner' on a month-end. COMMIT verdict does NOT authorize live trading — full PRD section 2.4 live-cash gate (3+ months paper, ensemble DSR > 0 at n_trials=30, KS distribution match, Backtrader validator) remains in force.",
+        "testStrategy": "",
+        "status": "done",
+        "dependencies": [
+          35
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 37,
+        "title": "Parameter sensitivity grid on TSMOM",
+        "description": "Run sensitivity grid: lookback in {1,3,6,9,12,15} months x vol-target in {6,8,10,12,15}pct x rebal in {weekly, biweekly, monthly}. Report mean Sharpe + rank of chosen config (12m blend / 10pct vol / monthly). If chosen is not top-quartile, signal is overfit and Branch C must restart per PRD section 3 hard restart rule.",
+        "details": "New script casino/backtest/tsmom_sensitivity.py (or extend tsmom_baseline.py with --grid mode). 90 combos total (6 lookbacks x 5 vol-targets x 3 rebal cadences). Run each on strict-OOS 2006-04 to 2026 universe at 12bps RT. Output: reports/tsmom_sensitivity.csv with Sharpe / DSR / MaxDD / annret per cell, and tsmom_sensitivity.md summarizing mean Sharpe of grid, percentile rank of chosen point. Acceptance: chosen config (lookback=blend{1,3,6,12}, voltgt=10pct, monthly) lies in top quartile of grid Sharpes. If FAIL: file BLOCKED note in PRD and halt all downstream work (tasks 39, 40, 41, 42 blocked). RESULT 2026-05-07: chosen_sharpe=0.3461, top_quartile_cutoff=0.3743, percentile=0.5556 -> strategy verdict FAIL. BLOCKED note filed in .taskmaster/docs/prd.txt section 3. Tasks 39, 40, 41, 42 are downstream-blocked.",
+        "testStrategy": "",
+        "status": "done",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 38,
+        "title": "Build cross-asset carry signal and baseline gate",
+        "description": "New casino/signals/carry.py implementing Koijen-Moskowitz-Pedersen-Vrugt cross-asset carry: bond carry (10y yield - T-bill from FRED), equity carry (ETF distribution yield - T-bill), commodity carry (DBC term-structure proxy, optional). New casino/data/ingest_fred.py for free FRED yield-curve data. New casino/backtest/carry_baseline.py gate: standalone Sharpe>=0.4, deflated SR>0 at n_trials=30, realized correlation with TSMOM<0.4 on OOS sample.",
+        "details": "Three new modules. (a) casino/data/ingest_fred.py: free FRED API (DGS10, DGS2, DGS3MO, DTB3); store via data/store.py to fred_yields table. (b) casino/signals/carry.py: bond carry per ETF (TLT->10y-Tbill, IEF->5y-Tbill); equity carry per ETF (trailing 12m distribution yield - Tbill from yfinance dividends history); commodity carry from DBC roll-yield proxy (front-back spread; defer USO/GLD if too complex). Cross-sectional rank-and-weight: long top-half / short bottom-half OR long-only top quintile (match TSMOM long-only mode). (c) casino/backtest/carry_baseline.py: strict-OOS 2006-04 to 2026 at 12bps RT. Gate: Sharpe>=0.4, DSR(n_trials=30)>0, corr(carry_returns, tsmom_returns) on OOS<0.4. Tests: tests/test_carry_signal.py (no look-ahead in carry computation), tests/test_carry_baseline.py (regression Sharpe + corr threshold).",
+        "testStrategy": "",
+        "status": "done",
+        "dependencies": [],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 39,
+        "title": "Build TSMOM + carry ensemble baseline",
+        "description": "New casino/backtest/ensemble_baseline.py combining TSMOM and carry weights via risk parity or fixed allocation. Run through Backtrader event-driven validator. Blocks live-cash gate per PRD section 2.4 / 6.3.",
+        "details": "New module casino/backtest/ensemble_baseline.py. Combine target weights from ts_momentum.compute_tsmom_panel and signals.carry.compute_carry_panel using either (a) risk parity at signal level (inverse-vol weighted on rolling 60d signal returns) or (b) fixed 50/50 dollar allocation. Renormalize so portfolio gross<=1.0 (preserve risk.py invariant). Backtest strict-OOS 2006-04 to 2026 at 12bps RT. Then route final weights through TSMomEventBacktest (task 35) for event-driven confirmation. Acceptance: ensemble Sharpe>=0.5, DSR(n_trials=30)>0, MaxDD>-25pct; bt-vs-vbt Sharpe delta<10pct. Output reports/ensemble_baseline.md. Tests: tests/test_ensemble_baseline.py.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          35,
+          37,
+          38
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 40,
+        "title": "Live paper-trade TSMOM+carry ensemble in Alpaca",
+        "description": "Replace TSMOM-alone with TSMOM+carry ensemble in Alpaca paper. Track daily P&L vs backtest predicted distribution; KS-test for distribution match. Per PRD section 6.3 live-cash gate item 3.",
+        "details": "Extend casino/execution/tsmom_runner.py to ensemble_runner.py (or generalize): pull OHLCV + FRED yields, compute combined ensemble weights via casino.backtest.ensemble_baseline, submit Alpaca paper orders monthly. Also add casino/monitoring/ks_test.py: daily-rebal cumret vs backtest predicted distribution Kolmogorov-Smirnov test, alert via Discord webhook if KS-stat fails 95pct CI. Persist daily live-paper P&L to SQLite live_pnl table; backtest predicted distribution stored at deployment time. Acceptance: 30+ days paper history with KS-test p>0.05 (distribution match) before live-cash review. Logs to monitoring/dashboard.py paper-vs-backtest panel.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          36,
+          39
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 41,
+        "title": "Monitoring dashboard updates for TSMOM and carry",
+        "description": "Extend casino/monitoring/dashboard.py with TSMOM and carry P&L panels, paper-vs-backtest divergence chart, and current weights view.",
+        "details": "Add Streamlit panels: (a) TSMOM live-paper cumulative P&L vs backtest expected curve since deployment, (b) Carry signal P&L (post-task-38), (c) Paper-vs-backtest divergence (drawdown delta + KS-test p-value), (d) Current target weights table from latest signal panel + reconciled positions from execution/reconcile.py. Re-use existing dashboard scaffolding (task 26). Tests: tests/test_dashboard_panels.py snapshot rendering with mock data. Run via 'uv run streamlit run casino/monitoring/dashboard.py'.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          36,
+          38
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 42,
+        "title": "(Stretch) Form 4 cluster purchase signal as 3rd ensemble leg",
+        "description": "ONLY if time permits after ensemble passes its gates. Free SEC EDGAR Form 4 XML parsing for insider cluster purchases. Expected retail Sharpe 0.20-0.40. Carry strictly dominates as 2nd leg per researcher; Form 4 is only useful as a 3rd uncorrelated leg.",
+        "details": "Optional 3rd leg per PRD section 2.3 step 3. New casino/data/ingest_form4.py: pull Form 4 XML from SEC EDGAR full-index, parse insider purchase transactions, identify cluster purchases (multiple insiders >=2 buying within 7d at same issuer). New casino/signals/form4_cluster.py: cluster-purchase score per ticker. New casino/backtest/form4_baseline.py: standalone gate Sharpe>=0.20, DSR(n_trials=30)>0, corr with TSMOM AND carry both <0.4 on OOS. Decision rule per PRD section 2.3: if cleared AND additive to ensemble Sharpe by >=0.1, integrate as 3rd leg in ensemble_baseline; else shelve. Stretch: only start if tasks 35-40 done with time remaining in 90-day plan.",
+        "testStrategy": "",
+        "status": "pending",
+        "dependencies": [
+          39
+        ],
+        "priority": "medium",
+        "subtasks": []
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-03T17:05:39.098Z",
+      "lastModified": "2026-05-07T20:47:30.219Z",
       "taskCount": 34,
       "completedCount": 31,
       "tags": [
         "master"
-      ]
+      ],
+      "created": "2026-05-07T20:48:51.999Z",
+      "description": "Tasks for master context",
+      "updated": "2026-05-07T20:52:02.800Z"
     }
   }
 }

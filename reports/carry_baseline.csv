@@ -1,0 +1,2 @@
+n_assets,start_date,end_date,mode,cost_bps,sharpe,sortino,max_drawdown,win_rate,total_return,annualized_return,annualized_vol,corr_with_tsmom,deflated_sharpe,deflated_p_value,deflated_n_trials,deflated_n_observations,verdict
+10,2006-01-02,2026-05-06,long_short,12.0,-0.113,-0.179,-0.3364,0.4381,-0.1773,-0.0095,0.0631,-0.2602,-3.131,0.999129,30,5392,FAIL

@@ -369,6 +369,305 @@ def build_snapshot(
     )
 
 
+# ---------------------------------------------------------------------------- 30-day-cap panel
+#
+# Branch C amendment 2026-05-07. The panel below is the *minimum* needed
+# to monitor the TSMOM 30-day cap (PRD §6.3 amendment). It is NOT the
+# full task 41 dashboard build — task 41 remains BLOCKED. The panels here
+# show:
+#
+#   * days elapsed / 30 with a progress fraction
+#   * paper cumulative P&L vs backtest expected curve since deployment
+#   * current live target weights from the most recent rebal_event
+#   * reconciled positions with drift > 0.5% NAV flagged
+#   * kill-criterion status table (each criterion: triggered y/n,
+#     current value vs threshold)
+
+
+@dataclass(frozen=True)
+class CriterionPanelRow:
+    """One kill-criterion line for the dashboard table."""
+
+    name: str
+    triggered: bool
+    value: float
+    threshold: float
+    detail: str
+
+
+@dataclass(frozen=True)
+class PaperClockPanel:
+    """30-day-cap dashboard panel data-prep output.
+
+    All fields are dashboard-safe scalars / lists — no SDK objects, no
+    Streamlit / Plotly types. The render layer below converts these to
+    HTML.
+    """
+
+    started: bool
+    days_elapsed: int | None
+    cap_days: int
+    progress_fraction: float
+    start_nav: Decimal
+    current_equity: Decimal
+    paper_cum_pl: Decimal
+    n_rebals: int
+    n_kill_events: int
+    verdict: str | None
+    criteria: list[CriterionPanelRow]
+    reconcile_drift_fraction: float
+    reconcile_drift_red: bool  # True iff drift > 0.5% NAV (verdict threshold)
+    target_weights: list[tuple[str, float]]
+
+
+def build_paper_clock_panel(
+    *,
+    broker: AlpacaBroker | None = None,
+    db_path: Path | None = None,
+    run_id: str | None = None,
+    backtest_returns_path: Path | None = None,
+) -> PaperClockPanel:
+    """Build the 30-day-cap monitoring panel. No streamlit imports.
+
+    Tolerates missing data: if the paper clock has not been started yet,
+    returns ``started=False`` with sensible empties so the dashboard
+    renders an "awaiting first rebal" placeholder instead of crashing.
+    """
+    # Local imports to avoid circular reference at module-load time.
+    # (dashboard is imported by other code paths during cron init.)
+    from casino.execution import paper_clock as _pc  # noqa: PLC0415
+    from casino.execution import tsmom_clock_check as _tcc  # noqa: PLC0415
+
+    rid = run_id if run_id is not None else _pc.DEFAULT_RUN_ID
+    backtest_path = (
+        backtest_returns_path
+        if backtest_returns_path is not None
+        else _tcc.BACKTEST_RETURNS_PATH
+    )
+
+    clock = _pc.fetch_paper_clock(run_id=rid, db_path=db_path)
+    rebals = _pc.fetch_rebal_events(run_id=rid, db_path=db_path)
+    kills = _pc.fetch_kill_events(run_id=rid, db_path=db_path)
+
+    if clock is None:
+        return PaperClockPanel(
+            started=False,
+            days_elapsed=None,
+            cap_days=_pc.PAPER_CAP_DAYS,
+            progress_fraction=0.0,
+            start_nav=Decimal("0"),
+            current_equity=Decimal("0"),
+            paper_cum_pl=Decimal("0"),
+            n_rebals=0,
+            n_kill_events=0,
+            verdict=None,
+            criteria=[],
+            reconcile_drift_fraction=0.0,
+            reconcile_drift_red=False,
+            target_weights=[],
+        )
+
+    days = _pc.days_elapsed(run_id=rid, db_path=db_path) or 0
+    progress = min(days / max(clock.cap_days, 1), 1.0)
+
+    # Equity series.
+    history = book.fetch_daily_pnl(limit=2000, db_path=db_path)
+    current_equity = history[0].equity_close if history else clock.start_nav
+    cum_pl = current_equity - clock.start_nav
+
+    # Latest target weights from last rebal_event, if any.
+    weights: list[tuple[str, float]] = []
+    if rebals:
+        latest = rebals[-1]
+        try:
+            import json as _json  # noqa: PLC0415
+
+            blob = _json.loads(latest.target_weights_json)
+            if isinstance(blob, list):
+                for item in blob:
+                    if isinstance(item, dict) and "symbol" in item and "weight" in item:
+                        weights.append((str(item["symbol"]), float(item["weight"])))
+        except Exception:  # noqa: BLE001
+            weights = []
+
+    # Criterion statuses. We re-evaluate the storable ones (drawdown, single_day)
+    # from the daily_pnl table. We need the broker for cap_violation and
+    # reconcile_drift; if no broker is supplied we mark them as "n/a".
+    criteria: list[CriterionPanelRow] = []
+    eqs = [r.equity_close for r in reversed(history)]
+    dd_status = _tcc._evaluate_drawdown(start_nav=clock.start_nav, eqs=eqs)
+    sd_status = _tcc._evaluate_single_day(db_path=db_path)
+    ks_status = _tcc._evaluate_ks_test(
+        days_elapsed=days,
+        db_path=db_path,
+        backtest_returns_path=backtest_path,
+    )
+    for s in (dd_status, sd_status, ks_status):
+        criteria.append(
+            CriterionPanelRow(
+                name=s.name,
+                triggered=s.triggered,
+                value=float(s.value),
+                threshold=float(s.threshold),
+                detail=s.detail,
+            )
+        )
+
+    drift_fraction = 0.0
+    drift_red = False
+    if broker is not None:
+        try:
+            cap_status = _tcc._evaluate_cap_violation(broker)
+            criteria.append(
+                CriterionPanelRow(
+                    name=cap_status.name,
+                    triggered=cap_status.triggered,
+                    value=float(cap_status.value),
+                    threshold=float(cap_status.threshold),
+                    detail=cap_status.detail,
+                )
+            )
+            drift_status = _tcc._evaluate_reconcile_drift(broker=broker, db_path=db_path)
+            criteria.append(
+                CriterionPanelRow(
+                    name=drift_status.name,
+                    triggered=drift_status.triggered,
+                    value=float(drift_status.value),
+                    threshold=float(drift_status.threshold),
+                    detail=drift_status.detail,
+                )
+            )
+            drift_fraction = float(drift_status.value)
+            drift_red = drift_fraction > float(_tcc.RECONCILE_DRIFT_COMMIT_THRESHOLD)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return PaperClockPanel(
+        started=True,
+        days_elapsed=days,
+        cap_days=clock.cap_days,
+        progress_fraction=progress,
+        start_nav=clock.start_nav,
+        current_equity=current_equity,
+        paper_cum_pl=cum_pl,
+        n_rebals=len(rebals),
+        n_kill_events=len(kills),
+        verdict=clock.verdict,
+        criteria=criteria,
+        reconcile_drift_fraction=drift_fraction,
+        reconcile_drift_red=drift_red,
+        target_weights=weights,
+    )
+
+
+def paper_clock_panel_html(panel: PaperClockPanel) -> str:
+    """Render the 30-day-cap panel as HTML for the dashboard.
+
+    Keeps with the existing dashboard's raw-HTML approach. The styling
+    re-uses the `.section`, `.data`, `.metric-strip`, and `.spend-bar`
+    CSS classes already defined in `_CSS` above.
+    """
+    if not panel.started:
+        return (
+            "<div class='section'>"
+            "<h2><span class='num-tag'>05</span>30-day cap · awaiting first rebal</h2>"
+            "<span class='meta'>tsmom paper clock not started</span>"
+            "</div>"
+            "<div style='padding:1rem 1.6rem;color:var(--text-faint);'>"
+            "Run <code>uv run python -m casino.execution.tsmom_runner</code> "
+            "on the next month-end to start the 30-day clock."
+            "</div>"
+        )
+    days_str = f"{panel.days_elapsed}/{panel.cap_days}"
+    pct = int(panel.progress_fraction * 100)
+    pl_cls = "pos" if panel.paper_cum_pl >= Decimal("0") else "neg"
+    drift_cls = "neg" if panel.reconcile_drift_red else "dim"
+    verdict_cls = (
+        "pos"
+        if panel.verdict == "COMMIT"
+        else ("neg" if panel.verdict == "KILL" else "warn")
+    )
+    verdict_str = panel.verdict or "PENDING"
+
+    # Criterion table.
+    crit_rows: list[str] = []
+    for c in panel.criteria:
+        cls = "neg" if c.triggered else "pos"
+        glyph = "◯" if c.triggered else "●"
+        crit_rows.append(
+            f"<tr>"
+            f"<td class='c {cls}'>{glyph}</td>"
+            f"<td class='sym'>{c.name}</td>"
+            f"<td class='r'>{c.value:.4f}</td>"
+            f"<td class='r dim'>{c.threshold:.4f}</td>"
+            f"<td class='dim'>{c.detail}</td>"
+            f"</tr>"
+        )
+    crit_body = (
+        "".join(crit_rows)
+        if crit_rows
+        else "<tr><td colspan='5' class='empty'>— no criteria evaluated —</td></tr>"
+    )
+
+    # Target weights.
+    w_rows = "".join(
+        f"<tr><td class='sym'>{s}</td><td class='r'>{w:.4f}</td></tr>"
+        for s, w in panel.target_weights
+    ) or "<tr><td colspan='2' class='empty'>— no rebal yet —</td></tr>"
+
+    return f"""
+    <div class='section'>
+      <h2><span class='num-tag'>05</span>30-day cap · TSMOM paper-trade clock</h2>
+      <span class='meta'>day {days_str} · {panel.n_rebals} rebal · {panel.n_kill_events} kill</span>
+    </div>
+    <div class='metric-strip'>
+      <div class='metric-cell'>
+        <span class='lbl'>Days</span>
+        <div class='num'>{days_str}</div>
+        <div class='sub'>progress {pct}%</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Start NAV</span>
+        <div class='num'>{_fmt_money(panel.start_nav, decimals=0)}</div>
+        <div class='sub'>day 0 reference</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Equity now</span>
+        <div class='num'>{_fmt_money(panel.current_equity, decimals=0)}</div>
+        <div class='sub'>paper account</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Paper cum P&L</span>
+        <div class='num {pl_cls}'>{_fmt_money(panel.paper_cum_pl, signed=True, decimals=0)}</div>
+        <div class='sub'>since clock start</div>
+      </div>
+      <div class='metric-cell'>
+        <span class='lbl'>Verdict</span>
+        <div class='num {verdict_cls}'>{verdict_str}</div>
+        <div class='sub'>day-30 binary gate</div>
+      </div>
+    </div>
+    <table class='data'>
+      <thead><tr>
+        <th class='c'>Trig</th>
+        <th>Criterion</th>
+        <th class='r'>Value</th>
+        <th class='r'>Threshold</th>
+        <th>Detail</th>
+      </tr></thead>
+      <tbody>{crit_body}</tbody>
+    </table>
+    <div class='section'>
+      <h2><span class='num-tag'>05a</span>Latest target weights</h2>
+      <span class='meta'>reconcile drift <span class='{drift_cls}'>{panel.reconcile_drift_fraction:.4%}</span></span>
+    </div>
+    <table class='data'>
+      <thead><tr><th>Symbol</th><th class='r'>Weight</th></tr></thead>
+      <tbody>{w_rows}</tbody>
+    </table>
+    """
+
+
 # ---------------------------------------------------------------------------- streamlit entry
 
 
@@ -1589,6 +1888,14 @@ def render(snapshot: DashboardSnapshot | None = None) -> None:  # pragma: no cov
         """,
         unsafe_allow_html=True,
     )
+
+    # 30-day-cap panel (Branch C amendment 2026-05-07).
+    # Built from a fresh data-prep pass that reads paper_clock + kill_event +
+    # rebal_event tables. broker is None here so cap_violation / reconcile_drift
+    # rows are skipped — they require a live broker handle, which the read-only
+    # Streamlit dashboard does not need.
+    pc_panel = build_paper_clock_panel(broker=None)
+    st.markdown(paper_clock_panel_html(pc_panel), unsafe_allow_html=True)
 
     st.markdown(
         _status_bar_html(snap, broker_connected=broker_connected),

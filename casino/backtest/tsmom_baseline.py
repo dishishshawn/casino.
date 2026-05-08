@@ -63,7 +63,7 @@ def _backtest_weights_returns(
     prices: pd.DataFrame,
     *,
     cost_bps: float,
-    rebalance: Literal["monthly", "weekly", "daily"] = "monthly",
+    rebalance: Literal["monthly", "biweekly", "weekly", "daily"] = "monthly",
 ) -> pd.Series:
     """Run weight-based backtest and return the daily portfolio return series."""
     common_cols = weights.columns.intersection(prices.columns)
@@ -79,6 +79,17 @@ def _backtest_weights_returns(
         rebal_mask = pd.Series(True, index=w.index)
     elif rebalance == "weekly":
         rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+    elif rebalance == "biweekly":
+        # Biweekly = every-other ISO-week boundary: rebalance at the first day of a
+        # new ISO week whose week number has even parity. Approximates "every 10
+        # trading days" without drifting through holidays.
+        weeks = pd.Series(w.index.isocalendar().week.values, index=w.index)
+        new_week = weeks.diff().fillna(1) != 0
+        even_week = (weeks % 2) == 0
+        rebal_mask = new_week & even_week
+        # Always rebalance on first bar so positions are seeded.
+        if len(rebal_mask) > 0:
+            rebal_mask.iloc[0] = True
     else:  # monthly
         idx_dt = pd.DatetimeIndex(w.index)
         idx_naive = idx_dt.tz_localize(None) if idx_dt.tz is not None else idx_dt
@@ -98,13 +109,13 @@ def _backtest_weights(
     prices: pd.DataFrame,
     *,
     cost_bps: float,
-    rebalance: Literal["monthly", "weekly", "daily"] = "monthly",
+    rebalance: Literal["monthly", "biweekly", "weekly", "daily"] = "monthly",
 ) -> dict[str, float]:
     """Run a position-weight backtest with periodic rebalancing.
 
     Unlike vbt_research's quintile-rank harness, this respects the actual
     target weights (vol-targeting matters here). Rebalances on the *first*
-    trading day of each new month/week (or every day in 'daily' mode).
+    trading day of each new month/(2-)week (or every day in 'daily' mode).
     """
     port_ret = _backtest_weights_returns(weights, prices, cost_bps=cost_bps, rebalance=rebalance)
     if port_ret.empty:
@@ -122,6 +133,13 @@ def _backtest_weights(
         rebal_mask = months.ne(months.shift(1)).fillna(True)
     elif rebalance == "weekly":
         rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+    elif rebalance == "biweekly":
+        weeks = pd.Series(w.index.isocalendar().week.values, index=w.index)
+        new_week = weeks.diff().fillna(1) != 0
+        even_week = (weeks % 2) == 0
+        rebal_mask = new_week & even_week
+        if len(rebal_mask) > 0:
+            rebal_mask.iloc[0] = True
     else:
         rebal_mask = pd.Series(True, index=w.index)
     held = w.where(rebal_mask, np.nan).ffill().fillna(0.0)

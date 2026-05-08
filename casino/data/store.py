@@ -24,11 +24,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import duckdb
 from loguru import logger
 
 from casino.config import get_config
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 # Public schema definitions. Idempotent (CREATE TABLE IF NOT EXISTS).
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
@@ -119,6 +123,22 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         added_on   TIMESTAMPTZ NOT NULL,
         removed_on TIMESTAMPTZ,
         PRIMARY KEY (index_name, ticker, added_on)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS fred_yields (
+        series_id VARCHAR     NOT NULL,
+        ts        TIMESTAMPTZ NOT NULL,
+        value     DOUBLE,
+        PRIMARY KEY (series_id, ts)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS dividends (
+        ticker VARCHAR     NOT NULL,
+        ts     TIMESTAMPTZ NOT NULL,
+        amount DOUBLE      NOT NULL,
+        PRIMARY KEY (ticker, ts)
     )
     """,
 )
@@ -395,6 +415,99 @@ def upsert_finbert_scores(
             ],
         )
     return len(rows)
+
+
+def upsert_fred_yields(rows: list[dict[str, object]], *, db_path: Path | None = None) -> int:
+    """Idempotently upsert FRED yield rows on (series_id, ts).
+
+    Each row: {"series_id": str, "ts": datetime, "value": float | None}.
+    """
+    if not rows:
+        return 0
+    sql = """
+        INSERT OR REPLACE INTO fred_yields (series_id, ts, value)
+        VALUES (?, ?, ?)
+    """
+    with get_duckdb_conn(db_path) as conn:
+        conn.executemany(
+            sql,
+            [(r["series_id"], r["ts"], r.get("value")) for r in rows],
+        )
+    return len(rows)
+
+
+def load_fred_panel(
+    *,
+    series_ids: list[str],
+    start: datetime,
+    end: datetime,
+    db_path: Path | None = None,
+) -> pd.DataFrame:
+    """Return a wide panel (date × series_id) of FRED yield values.
+
+    Values are returned as decimals (e.g. 4.25 for 4.25%, matching the FRED CSV
+    convention — callers wanting percent-of-1 should divide by 100).
+    """
+    import pandas as pd  # local to avoid hard dep at module import time
+
+    if not series_ids:
+        return pd.DataFrame()
+    placeholders = ",".join("?" * len(series_ids))
+    sql = f"""
+        SELECT series_id, ts, value
+        FROM fred_yields
+        WHERE ts BETWEEN ? AND ?
+          AND series_id IN ({placeholders})
+    """
+    params: list[object] = [start, end, *series_ids]
+    with get_duckdb_conn(db_path, read_only=True) as conn:
+        df = conn.execute(sql, params).df()
+    if df.empty:
+        return pd.DataFrame()
+    panel: pd.DataFrame = df.pivot(index="ts", columns="series_id", values="value").sort_index()
+    return panel
+
+
+def upsert_dividends(rows: list[dict[str, object]], *, db_path: Path | None = None) -> int:
+    """Idempotently upsert ticker-dividend rows on (ticker, ts)."""
+    if not rows:
+        return 0
+    sql = """
+        INSERT OR REPLACE INTO dividends (ticker, ts, amount)
+        VALUES (?, ?, ?)
+    """
+    with get_duckdb_conn(db_path) as conn:
+        conn.executemany(
+            sql,
+            [(r["ticker"], r["ts"], r["amount"]) for r in rows],
+        )
+    return len(rows)
+
+
+def load_dividends_panel(
+    *,
+    tickers: list[str],
+    start: datetime,
+    end: datetime,
+    db_path: Path | None = None,
+) -> pd.DataFrame:
+    """Return long-format dividends DataFrame (ticker, ts, amount) for the universe."""
+    import pandas as pd  # local
+
+    if not tickers:
+        return pd.DataFrame(columns=["ticker", "ts", "amount"])
+    placeholders = ",".join("?" * len(tickers))
+    sql = f"""
+        SELECT ticker, ts, amount
+        FROM dividends
+        WHERE ts BETWEEN ? AND ?
+          AND ticker IN ({placeholders})
+        ORDER BY ticker, ts
+    """
+    params: list[object] = [start, end, *tickers]
+    with get_duckdb_conn(db_path, read_only=True) as conn:
+        df: pd.DataFrame = conn.execute(sql, params).df()
+    return df
 
 
 def upsert_index_constituent(

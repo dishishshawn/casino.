@@ -76,7 +76,9 @@ module = [
     "casino.backtest.composite_baseline",
     "casino.backtest.finbert_baseline",
     "casino.backtest.tsmom_baseline",
+    "casino.backtest.carry_baseline",
     "casino.signals.ts_momentum",
+    "casino.signals.carry",
 ]
 disallow_untyped_defs = false
 warn_return_any = false
