@@ -1,0 +1,25 @@
+# Default to auto-detection.
+* text=auto
+
+# Force LF on source files. Avoids CRLF churn on Windows checkouts.
+*.py text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.csv text eol=lf
+
+# Keep Windows-native scripts as CRLF.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Mark binaries explicitly.
+*.duckdb binary
+*.sqlite binary
+*.parquet binary
+*.png binary
+*.jpg binary
+*.pdf binary

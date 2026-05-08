@@ -332,7 +332,9 @@ def test_news_intraday_budget_breach_halts(isolated_paths) -> None:
     duck, state = isolated_paths
     as_of = datetime(2026, 5, 3, 12, 0, tzinfo=UTC)
 
-    # Pre-populate llm_calls with $5 of spend already today
+    # Pre-populate llm_calls with $10 of spend, stamped at as_of's UTC date
+    # so daily_llm_spend(day_utc=as_of) sees it. Without timestamp_utc the row
+    # would be stamped at "now" and the date filter would miss it.
     audit.write_audit_row(
         prompt_hash="x",
         model="claude-haiku-4-5",
@@ -348,6 +350,7 @@ def test_news_intraday_budget_breach_halts(isolated_paths) -> None:
         error_msg=None,
         schema_name="HeadlineClassification",
         db_path=state,
+        timestamp_utc=as_of,
     )
 
     store.upsert_news(

@@ -46,7 +46,24 @@ CLI:
     uv run python -m casino.execution.tsmom_runner [--force] [--dry-run]
 
     --force     run even if today is not a rebal day (operator override).
+                Also bypasses the OHLCV freshness gate.
     --dry-run   compute signal + sized orders + log them, but do NOT submit.
+
+Operational sequence on a month-end (must run in this order, AFTER NYSE
+close + ~30 min for yfinance to publish today's adj_close):
+
+    # 1. Ingest today's bar into DuckDB.
+    uv run python -m casino.data.ingest_yfinance \
+        --tickers-file universe_tsmom.txt --mode ohlcv \
+        --ohlcv-start 2026-04-01 --rate-limit-sec 0
+
+    # 2. Run the rebal. Will hard-fail if step 1 didn't land today's bar.
+    uv run python -m casino.execution.tsmom_runner
+
+The runner contains an explicit freshness assertion: if the latest DuckDB
+adj_close timestamp is < today's date, the runner returns a no-op result
+with the exact ingest command in the skipped_reason. This is intentional:
+a stale rebal would invalidate the 30-day paper sample.
 """
 
 from __future__ import annotations
@@ -448,6 +465,33 @@ def run_rebal(
             dry_run=dry_run,
             nav=portfolio.nav,
             skipped_reason="no OHLCV history available; cannot compute TSMOM weights",
+        )
+
+    # Freshness gate. The runner fires monthly on the last bday of the month,
+    # AFTER NYSE close. Today's adj_close must be ingested into DuckDB before
+    # we compute weights — otherwise we'd rebal on yesterday's signal and the
+    # 30-day paper sample would be invalidated by stale-data noise. Hard-fail
+    # with the exact ingestion command so the operator can fix it in one step.
+    latest_ts = prices.index.max()
+    latest_date = latest_ts.date() if hasattr(latest_ts, "date") else latest_ts
+    if latest_date < today and not force:
+        cmd = (
+            "uv run python -m casino.data.ingest_yfinance "
+            "--tickers-file universe_tsmom.txt --mode ohlcv "
+            f"--ohlcv-start {(today - timedelta(days=30)).isoformat()} "
+            "--rate-limit-sec 0"
+        )
+        return RebalRunResult(
+            rebal_date_utc=today,
+            is_rebal_day=is_rebal_day,
+            forced=force,
+            dry_run=dry_run,
+            nav=portfolio.nav,
+            skipped_reason=(
+                f"OHLCV stale: latest bar {latest_date.isoformat()} < "
+                f"today {today.isoformat()}. Run yfinance ingest first AFTER "
+                f"NYSE close (~6 PM ET), then re-run the rebal:\n  {cmd}"
+            ),
         )
 
     targets = latest_target_weights(

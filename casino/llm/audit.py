@@ -89,6 +89,7 @@ def write_audit_row(
     error_msg: str | None,
     schema_name: str | None,
     db_path: Path | None = None,
+    timestamp_utc: datetime | None = None,
 ) -> int:
     """Insert one audit row. Returns the new row id."""
     init_audit_schema(db_path)
@@ -99,7 +100,7 @@ def write_audit_row(
             cost_usd, latency_ms, parsed_score_json, success, error_msg, schema_name
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
-    ts = datetime.now(tz=UTC).isoformat()
+    ts = (timestamp_utc if timestamp_utc is not None else datetime.now(tz=UTC)).isoformat()
     parsed_json = json.dumps(parsed_score) if parsed_score is not None else None
     with get_audit_conn(db_path) as conn:
         cur = conn.execute(
