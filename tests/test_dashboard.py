@@ -268,3 +268,38 @@ def test_paper_clock_panel_html_commit_verdict(state: Path) -> None:
     panel = dashboard.build_paper_clock_panel(broker=None, db_path=state)
     html = dashboard.paper_clock_panel_html(panel)
     assert "COMMIT" in html
+
+
+# ---------------------------------------------------------------------------- side-by-side comparison
+
+
+def test_comparison_panel_renders_both_run_ids(state: Path) -> None:
+    """Comparison panel renders both live (DiCaprio) and shadow run_id columns."""
+    from casino.execution import paper_clock as _pc
+
+    _pc.ensure_started(run_id="DiCaprio", start_nav=Decimal("100000"), db_path=state)
+    _pc.ensure_started(
+        run_id="Belfort",
+        strategy="tsmom_regime_shadow",
+        start_nav=Decimal("100000"),
+        db_path=state,
+    )
+    live = dashboard.build_paper_clock_panel(broker=None, db_path=state, run_id="DiCaprio")
+    shadow = dashboard.build_paper_clock_panel(broker=None, db_path=state, run_id="Belfort")
+    html = dashboard.comparison_panel_html(live, shadow)
+    assert "DiCaprio" in html
+    assert "Belfort" in html
+    assert "vanilla TSMOM" in html
+    assert "regime-filtered" in html
+    assert "live vs shadow" in html.lower()
+
+
+def test_comparison_panel_handles_unstarted_shadow(state: Path) -> None:
+    """If only the live clock has started, shadow column shows 'not started'."""
+    from casino.execution import paper_clock as _pc
+
+    _pc.ensure_started(run_id="DiCaprio", start_nav=Decimal("100000"), db_path=state)
+    live = dashboard.build_paper_clock_panel(broker=None, db_path=state, run_id="DiCaprio")
+    shadow = dashboard.build_paper_clock_panel(broker=None, db_path=state, run_id="Belfort")
+    html = dashboard.comparison_panel_html(live, shadow)
+    assert "not started" in html

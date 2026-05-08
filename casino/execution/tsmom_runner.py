@@ -90,6 +90,7 @@ from casino.execution.risk import (
     snapshot_portfolio_from_broker,
     submit_order,
 )
+from casino.monitoring import alerts
 from casino.signals.ts_momentum import compute_tsmom_panel, load_ohlcv_panel
 
 if TYPE_CHECKING:
@@ -472,7 +473,11 @@ def run_rebal(
     # we compute weights — otherwise we'd rebal on yesterday's signal and the
     # 30-day paper sample would be invalidated by stale-data noise. Hard-fail
     # with the exact ingestion command so the operator can fix it in one step.
+    # Compare in UTC; DuckDB returns ts with whatever tz it stores in, so we
+    # normalize before .date() to avoid a CST/UTC date-rollover mismatch.
     latest_ts = prices.index.max()
+    if hasattr(latest_ts, "tz_convert") and latest_ts.tz is not None:
+        latest_ts = latest_ts.tz_convert("UTC")
     latest_date = latest_ts.date() if hasattr(latest_ts, "date") else latest_ts
     if latest_date < today and not force:
         cmd = (
@@ -554,6 +559,15 @@ def run_rebal(
                 a.reference_price,
                 a.stop_price,
             )
+            alerts.alert_order_submitted(
+                run_id=run_id,
+                symbol=a.symbol,
+                side="buy",
+                qty=a.qty,
+                reference_price=a.reference_price,
+                stop_price=a.stop_price,
+                order_id=ord_resp.id,
+            )
         except RiskRejection as e:
             logger.warning("tsmom_runner: risk rejected {}: {}", a.symbol, e)
         except TradingDisabledError as e:
@@ -590,6 +604,22 @@ def run_rebal(
             "tsmom_runner: post-rebal reconcile drift: {} entries",
             result.drift_after,
         )
+
+    # End-of-rebal Discord summary. One alert per rebal cycle complementing
+    # the per-order alerts above. Severity flips to warning if reconcile
+    # drift > 0; no exception here — alerts module is fail-soft.
+    alerts.alert_rebal_summary(
+        run_id=run_id,
+        rebal_date=today.isoformat(),
+        nav=nav_now,
+        n_orders_submitted=len(result.submitted_order_ids),
+        target_weights=[
+            {"symbol": tw.symbol, "weight": tw.weight} for tw in targets
+        ],
+        drift_after=result.drift_after,
+        forced=force,
+        dry_run=dry_run,
+    )
 
     return result
 

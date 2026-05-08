@@ -128,6 +128,61 @@ def test_alert_order_fill_info() -> None:
     assert "AAA" in embed["title"]
 
 
+def test_alert_order_submitted_info() -> None:
+    captured, tx = _capture()
+    alerts.alert_order_submitted(
+        run_id="DiCaprio",
+        symbol="SPY",
+        side="buy",
+        qty=5,
+        reference_price=Decimal("737.62"),
+        stop_price=Decimal("663.86"),
+        order_id="ord-abc",
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0x2ECC71  # info / green
+    assert "DiCaprio" in embed["title"]
+    assert "SPY" in embed["title"]
+    assert "ord-abc" in embed["description"]
+
+
+def test_alert_rebal_summary_info_when_no_drift() -> None:
+    captured, tx = _capture()
+    alerts.alert_rebal_summary(
+        run_id="DiCaprio",
+        rebal_date="2026-05-08",
+        nav=Decimal("100000"),
+        n_orders_submitted=1,
+        target_weights=[{"symbol": "SPY", "weight": 0.86}],
+        drift_after=0,
+        forced=True,
+        dry_run=False,
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0x2ECC71  # info / green
+    assert "DiCaprio" in embed["title"]
+    assert "FORCED" in embed["title"]
+
+
+def test_alert_rebal_summary_warning_when_drift() -> None:
+    captured, tx = _capture()
+    alerts.alert_rebal_summary(
+        run_id="DiCaprio",
+        rebal_date="2026-05-08",
+        nav=Decimal("100000"),
+        n_orders_submitted=1,
+        target_weights=[{"symbol": "SPY", "weight": 0.86}],
+        drift_after=2,
+        forced=False,
+        dry_run=False,
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0xF1C40F  # warning / amber
+
+
 def test_alert_handles_transport_exception() -> None:
     def boom(_url: str, _payload: dict[str, Any]) -> httpx.Response:
         raise httpx.ConnectError("nope")

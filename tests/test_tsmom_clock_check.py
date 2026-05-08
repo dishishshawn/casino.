@@ -654,3 +654,98 @@ def test_paper_max_drawdown_basic() -> None:
     # Peak 110 → trough 90 → 20/110 ≈ 0.1818
     assert dd > Decimal("0.18")
     assert dd < Decimal("0.19")
+
+
+# ---------------------------------------------------------------------------- multi-run_id scoping (Option B amendment 2026-05-08)
+
+
+def test_run_id_scoping_isolates_kill_events(state: Path) -> None:
+    """A kill_event under run_id A is invisible to a fetch under run_id B."""
+    paper_clock.ensure_started(
+        run_id="DiCaprio",
+        strategy="vanilla",
+        start_nav=Decimal("100000"),
+        cap_days=30,
+        db_path=state,
+    )
+    paper_clock.ensure_started(
+        run_id="Belfort",
+        strategy="regime",
+        start_nav=Decimal("100000"),
+        cap_days=30,
+        db_path=state,
+    )
+    paper_clock.insert_kill_event(
+        run_id="DiCaprio",
+        criterion="drawdown",
+        value=Decimal("0.15"),
+        threshold=DD_KILL_THRESHOLD,
+        nav_at_kill=Decimal("85000"),
+        db_path=state,
+    )
+    live_kills = paper_clock.fetch_kill_events(run_id="DiCaprio", db_path=state)
+    shadow_kills = paper_clock.fetch_kill_events(run_id="Belfort", db_path=state)
+    assert len(live_kills) == 1
+    assert len(shadow_kills) == 0
+
+
+def test_verdict_writes_parametrized_filename_for_non_default_run(
+    state: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_id != DEFAULT_RUN_ID produces tsmom_paper_30day_verdict_{run_id}.{csv,md}."""
+    rid = "Belfort"
+    paper_clock.ensure_started(
+        run_id=rid,
+        strategy="regime",
+        start_nav=Decimal("100000"),
+        cap_days=30,
+        db_path=state,
+    )
+    _backdate_clock_to_v2(state, run_id=rid, days_ago=30)
+    eq = 100000
+    for i in range(30):
+        eq_open = eq
+        eq_close = eq + 50
+        eq = eq_close
+        _add_pnl_row(
+            state,
+            date_str=f"2026-04-{i + 1:02d}" if i < 30 else f"2026-05-{i - 29:02d}",
+            eq_open=Decimal(eq_open),
+            eq_close=Decimal(eq_close),
+            realized=Decimal(50),
+        )
+    paper_clock.insert_rebal_event(
+        run_id=rid,
+        n_orders_submitted=3,
+        nav_at_rebal=Decimal("100500"),
+        target_weights_json='[{"symbol":"SPY","weight":0.5}]',
+        db_path=state,
+    )
+    broker, _ = _broker(equity=Decimal("101500"), positions=[])
+    monkeypatch.setattr("casino.execution.tsmom_clock_check.alerts.fire", _AlertCapture())
+    out = run_verdict(
+        broker=broker,
+        db_path=state,
+        backtest_returns_path=tmp_path / "missing.csv",
+        reports_dir=tmp_path / "reports",
+        run_id=rid,
+    )
+    assert out.verdict == "COMMIT"
+    csv_path = tmp_path / "reports" / f"tsmom_paper_30day_verdict_{rid}.csv"
+    md_path = tmp_path / "reports" / f"tsmom_paper_30day_verdict_{rid}.md"
+    assert csv_path.exists()
+    assert md_path.exists()
+    # Default-run files NOT created when a non-default run_id is used.
+    assert not (tmp_path / "reports" / "tsmom_paper_30day_verdict.csv").exists()
+
+
+def _backdate_clock_to_v2(state: Path, *, run_id: str, days_ago: int) -> None:
+    """run_id-aware variant of the existing helper."""
+    new_ts = (datetime.now(tz=UTC) - timedelta(days=days_ago)).isoformat()
+    with book.get_book_conn(state) as conn:
+        conn.execute(
+            "UPDATE paper_clock SET started_at_utc = ? WHERE run_id = ?",
+            (new_ts, run_id),
+        )

@@ -440,9 +440,7 @@ def build_paper_clock_panel(
 
     rid = run_id if run_id is not None else _pc.DEFAULT_RUN_ID
     backtest_path = (
-        backtest_returns_path
-        if backtest_returns_path is not None
-        else _tcc.BACKTEST_RETURNS_PATH
+        backtest_returns_path if backtest_returns_path is not None else _tcc.BACKTEST_RETURNS_PATH
     )
 
     clock = _pc.fetch_paper_clock(run_id=rid, db_path=db_path)
@@ -583,9 +581,7 @@ def paper_clock_panel_html(panel: PaperClockPanel) -> str:
     pl_cls = "pos" if panel.paper_cum_pl >= Decimal("0") else "neg"
     drift_cls = "neg" if panel.reconcile_drift_red else "dim"
     verdict_cls = (
-        "pos"
-        if panel.verdict == "COMMIT"
-        else ("neg" if panel.verdict == "KILL" else "warn")
+        "pos" if panel.verdict == "COMMIT" else ("neg" if panel.verdict == "KILL" else "warn")
     )
     verdict_str = panel.verdict or "PENDING"
 
@@ -610,10 +606,13 @@ def paper_clock_panel_html(panel: PaperClockPanel) -> str:
     )
 
     # Target weights.
-    w_rows = "".join(
-        f"<tr><td class='sym'>{s}</td><td class='r'>{w:.4f}</td></tr>"
-        for s, w in panel.target_weights
-    ) or "<tr><td colspan='2' class='empty'>— no rebal yet —</td></tr>"
+    w_rows = (
+        "".join(
+            f"<tr><td class='sym'>{s}</td><td class='r'>{w:.4f}</td></tr>"
+            for s, w in panel.target_weights
+        )
+        or "<tr><td colspan='2' class='empty'>— no rebal yet —</td></tr>"
+    )
 
     return f"""
     <div class='section'>
@@ -668,6 +667,87 @@ def paper_clock_panel_html(panel: PaperClockPanel) -> str:
     """
 
 
+# ---------------------------------------------------------------------------- side-by-side comparison
+
+
+def _single_compare_column(panel: PaperClockPanel, *, label: str, run_id: str) -> str:
+    """Render one column of the live-vs-shadow comparison panel."""
+    if not panel.started:
+        return (
+            f"<div style='flex:1;padding:1rem;border:1px solid var(--rule);'>"
+            f"<div class='lbl' style='margin-bottom:.4rem;'>{label}</div>"
+            f"<div style='color:var(--text-faint);font-size:.85rem;'>"
+            f"run_id <code>{run_id}</code> not started"
+            f"</div></div>"
+        )
+    days_str = f"{panel.days_elapsed}/{panel.cap_days}"
+    pl_cls = "pos" if panel.paper_cum_pl >= Decimal("0") else "neg"
+    verdict_cls = (
+        "pos" if panel.verdict == "COMMIT" else ("neg" if panel.verdict == "KILL" else "warn")
+    )
+    verdict_str = panel.verdict or "PENDING"
+    crit_rows: list[str] = []
+    for c in panel.criteria:
+        cls = "neg" if c.triggered else "pos"
+        glyph = "◯" if c.triggered else "●"
+        crit_rows.append(
+            f"<tr><td class='c {cls}'>{glyph}</td>"
+            f"<td class='sym'>{c.name}</td>"
+            f"<td class='r'>{c.value:.4f}</td></tr>"
+        )
+    crit_body = "".join(crit_rows) or "<tr><td colspan='3' class='empty'>—</td></tr>"
+    w_rows = (
+        "".join(
+            f"<tr><td class='sym'>{s}</td><td class='r'>{w:.4f}</td></tr>"
+            for s, w in panel.target_weights
+        )
+        or "<tr><td colspan='2' class='empty'>— no rebal —</td></tr>"
+    )
+    return f"""
+    <div style='flex:1;padding:1rem;border:1px solid var(--rule);'>
+      <div class='lbl' style='margin-bottom:.4rem;'>{label}</div>
+      <div style='font-size:.7rem;color:var(--text-faint);margin-bottom:.6rem;'>run_id <code>{run_id}</code></div>
+      <div style='display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:.6rem;'>
+        <div><span class='lbl'>Day</span><div class='num'>{days_str}</div></div>
+        <div><span class='lbl'>Equity</span><div class='num'>{_fmt_money(panel.current_equity, decimals=0)}</div></div>
+        <div><span class='lbl'>P&L</span><div class='num {pl_cls}'>{_fmt_money(panel.paper_cum_pl, signed=True, decimals=0)}</div></div>
+        <div><span class='lbl'>Verdict</span><div class='num {verdict_cls}'>{verdict_str}</div></div>
+        <div><span class='lbl'>Rebals</span><div class='num'>{panel.n_rebals}</div></div>
+        <div><span class='lbl'>Kills</span><div class='num'>{panel.n_kill_events}</div></div>
+      </div>
+      <table class='data'>
+        <thead><tr><th class='c'>Trig</th><th>Criterion</th><th class='r'>Val</th></tr></thead>
+        <tbody>{crit_body}</tbody>
+      </table>
+      <table class='data' style='margin-top:.6rem;'>
+        <thead><tr><th>Sym</th><th class='r'>w</th></tr></thead>
+        <tbody>{w_rows}</tbody>
+      </table>
+    </div>
+    """
+
+
+def comparison_panel_html(
+    live_panel: PaperClockPanel,
+    shadow_panel: PaperClockPanel,
+) -> str:
+    """Render the live (vanilla) vs shadow (regime-filtered) comparison.
+
+    Side-by-side columns. The user is comparing strategies — this is the
+    primary visual for the Option B parallel experiment.
+    """
+    return f"""
+    <div class='section'>
+      <h2><span class='num-tag'>05</span>30-day cap · live vs shadow comparison</h2>
+      <span class='meta'>vanilla TSMOM (left) · regime-filtered shadow (right)</span>
+    </div>
+    <div style='display:flex;gap:1rem;padding:0 1.6rem 1rem 1.6rem;'>
+      {_single_compare_column(live_panel, label="DiCaprio · vanilla TSMOM (live)", run_id="DiCaprio")}
+      {_single_compare_column(shadow_panel, label="Belfort · regime-filtered (sim)", run_id="Belfort")}
+    </div>
+    """
+
+
 # ---------------------------------------------------------------------------- streamlit entry
 
 
@@ -717,6 +797,19 @@ html, body, [data-testid="stAppViewContainer"], .main, .block-container {
     font-feature-settings: "tnum" 1, "ss01" 1, "ss02" 1, "calt" 0;
     font-variant-numeric: tabular-nums;
 }
+/* Subtle atmospheric vignette — keeps the canvas from feeling flat without
+   adding visual noise. Pinned to the viewport so it doesn't repeat. */
+[data-testid="stAppViewContainer"]::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+        radial-gradient(ellipse at top, rgba(232, 163, 61, 0.04), transparent 55%),
+        radial-gradient(ellipse at bottom, rgba(0, 0, 0, 0.6), transparent 70%);
+    z-index: 0;
+}
+[data-testid="stAppViewContainer"] > * { position: relative; z-index: 1; }
 .block-container {
     padding-top: 0 !important;
     padding-bottom: 4rem !important;
@@ -772,18 +865,34 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     grid-template-columns: 1fr auto;
     align-items: end;
     border-bottom: 1px solid var(--line-rule);
-    padding: 2.4rem 1.6rem 1.4rem 1.6rem;
+    padding: 2.2rem 1.6rem 1.3rem 1.6rem;
     margin-bottom: 0;
+    position: relative;
+}
+.brand-band::after {
+    content: "";
+    position: absolute;
+    left: 1.6rem;
+    right: 1.6rem;
+    bottom: -1px;
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        var(--accent) 0,
+        var(--accent) 64px,
+        transparent 64px
+    );
 }
 .brand-mark {
     font-family: 'Fraunces', 'Times New Roman', serif;
     font-weight: 900;
-    font-size: 64px;
-    line-height: 0.85;
-    letter-spacing: -0.04em;
+    font-size: 60px;
+    line-height: 0.82;
+    letter-spacing: -0.045em;
     color: var(--text);
     margin: 0;
     font-feature-settings: "ss01" 1;
+    font-style: italic;
 }
 .brand-mark .dot { color: var(--accent); }
 .brand-sub {
@@ -817,8 +926,8 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     margin-right: 1.2em;
 }
 .brand-meta .v { color: var(--text); }
-.brand-meta .v-disabled { color: var(--negative); font-weight: 700; }
-.brand-meta .v-ok { color: var(--positive); }
+.brand-meta .v-disabled { color: var(--negative); font-weight: 700; letter-spacing: 0.18em; }
+.brand-meta .v-ok { color: var(--accent); font-weight: 600; letter-spacing: 0.14em; }
 
 /* ============================================ kill-switch banner */
 .kill-banner {
@@ -949,21 +1058,23 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     font-size: 11px !important;
     letter-spacing: 0.14em !important;
     text-transform: uppercase !important;
-    padding: 11px 18px !important;
-    min-width: 168px !important;
-    width: auto !important;
-    max-width: none !important;
+    padding: 9px 10px !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
     height: auto !important;
-    min-height: 0 !important;
+    min-height: 36px !important;
     box-sizing: border-box !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    gap: 8px !important;
-    white-space: nowrap !important;
-    overflow: visible !important;
+    gap: 6px !important;
+    white-space: normal !important;
+    overflow: hidden !important;
     text-overflow: clip !important;
-    line-height: 1 !important;
+    word-break: keep-all !important;
+    line-height: 1.15 !important;
+    text-align: center !important;
     transition: background 80ms ease, border-color 80ms ease, color 80ms ease;
     box-shadow: none !important;
     vertical-align: middle !important;
@@ -979,8 +1090,10 @@ a, a:visited { color: var(--accent); text-decoration: none; }
 .stButton button span {
     margin: 0 !important;
     padding: 0 !important;
-    line-height: 1 !important;
-    white-space: nowrap !important;
+    line-height: 1.15 !important;
+    white-space: normal !important;
+    overflow-wrap: break-word !important;
+    max-width: 100% !important;
     font-family: inherit !important;
     font-size: inherit !important;
     font-weight: inherit !important;
@@ -989,7 +1102,10 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     color: inherit !important;
     display: inline-flex !important;
     align-items: center !important;
-    gap: 6px !important;
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+    text-align: center !important;
 }
 [data-testid="stButton"] > button:hover,
 [data-testid="baseButton-secondary"]:hover,
@@ -1019,8 +1135,24 @@ a, a:visited { color: var(--accent); text-decoration: none; }
 }
 /* Fix vertical alignment of streamlit columns — they default to align-items: stretch
    which sometimes pushes button rows down. Force baseline within the ops bar. */
+/* Streamlit's stHorizontalBlock is a flex row with inline percentage widths
+   that overflow narrow viewports. Replace with CSS grid auto-fit so columns
+   can never sum to more than the container — buttons reflow into rows
+   of >=150px slots regardless of the ratios passed to st.columns(). */
 .ops-bar-frame [data-testid="stHorizontalBlock"] {
-    align-items: center !important;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
+    gap: 6px !important;
+    align-items: stretch !important;
+}
+.ops-bar-frame [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+    width: auto !important;
+    min-width: 0 !important;
+    flex: none !important;
+}
+/* Last column ("action log") spans the remainder of the row. */
+.ops-bar-frame [data-testid="stHorizontalBlock"] > [data-testid="column"]:last-child {
+    grid-column: 1 / -1;
 }
 
 /* spinner styling */
@@ -1189,7 +1321,7 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     margin-right: 0.5em;
 }
 .status .item .v { color: var(--text-dim); }
-.status .item .v-ok { color: var(--positive); }
+.status .item .v-ok { color: var(--text); }
 .status .item .v-warn { color: var(--warn); }
 .status .item .v-bad { color: var(--negative); }
 .status .item + .item { margin-left: 2rem; }
@@ -1198,13 +1330,84 @@ a, a:visited { color: var(--accent); text-decoration: none; }
     width: 6px; height: 6px;
     border-radius: 50%;
     margin-right: 0.4em;
-    background: var(--positive);
-    box-shadow: 0 0 6px var(--positive);
+    background: var(--accent);
+    box-shadow: 0 0 6px rgba(232, 163, 61, 0.55);
+    animation: pulse 2.4s ease-in-out infinite;
 }
-.dot-live.bad { background: var(--negative); box-shadow: 0 0 6px var(--negative); }
+.dot-live.bad {
+    background: var(--negative);
+    box-shadow: 0 0 6px rgba(248, 81, 73, 0.55);
+}
 
 /* hide streamlit's default H1 + paddings if any leak */
 h1, h2, h3, h4 { font-family: 'Fraunces', serif !important; }
+
+/* ============================================ responsive: narrow viewports
+   Streamlit's default block-container caps width and the dashboard was designed
+   for ~1200px+. Below ~960px the 5-col metric strip, side-by-side brand band,
+   and 5-button ops row overflow horizontally with no scrollbar. Reflow them. */
+@media (max-width: 960px) {
+    .brand-band {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        padding: 1.6rem 1.2rem 1rem 1.2rem;
+    }
+    .brand-mark { font-size: 44px; }
+    .brand-meta { text-align: left; }
+    .brand-meta .label { min-width: 5.5em; margin-right: 0.8em; }
+
+    .metric-strip {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        margin: 0 1.2rem;
+    }
+    .metric-cell {
+        padding: 1.1rem 1rem 1rem 1rem;
+        border-bottom: 1px solid var(--line);
+    }
+    .metric-cell .num { font-size: 28px; }
+    .metric-cell.lg .num { font-size: 32px; }
+
+    .ops-bar-frame {
+        grid-template-columns: 1fr;
+        margin: 1.2rem 1.2rem 0 1.2rem;
+        gap: 0.8rem;
+    }
+    .ops-label { border-right: none; padding-right: 0; }
+
+    [data-testid="stButton"] > button,
+    [data-testid="baseButton-secondary"],
+    [data-testid="baseButton-primary"],
+    .stButton button {
+        min-width: 0 !important;
+        width: 100% !important;
+        padding: 10px 10px !important;
+        font-size: 10px !important;
+        letter-spacing: 0.08em !important;
+    }
+
+    .section {
+        margin: 1.6rem 1.2rem 0.5rem 1.2rem;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .section .meta { font-size: 9px; }
+
+    .split { grid-template-columns: 1fr; }
+    .split > div { border-right: none; border-bottom: 1px solid var(--line); }
+    .split > div:last-child { border-bottom: none; }
+
+    .data, .chart-frame, .spend-row, .kill-banner {
+        margin-left: 1.2rem !important;
+        margin-right: 1.2rem !important;
+    }
+    .data { width: calc(100% - 2.4rem); }
+}
+
+@media (max-width: 600px) {
+    .metric-strip { grid-template-columns: 1fr; }
+    .metric-cell { border-right: none; }
+    .metric-cell:not(:last-child) { border-bottom: 1px solid var(--line); }
+}
 </style>
 """
 
@@ -1637,16 +1840,21 @@ def _render_equity_chart(history: Sequence[book.DailyPnLRow]) -> Any:
     dates, eq, dd = _equity_drawdown_series(history)
     fig = go.Figure()
     if not dates:
-        # Empty — keep the frame so the page composition holds.
+        # Empty — keep the frame so the page composition holds. Suppress the
+        # default integer-tick axes so we don't render a fake "scale" with no
+        # data behind it; show only the empty-state stamp.
         fig.add_annotation(
-            text="— NO HISTORY —",
-            font=dict(family="IBM Plex Sans Condensed", size=14, color="#555149"),
+            text="— AWAITING FIRST RECONCILE —",
+            font=dict(family="IBM Plex Sans Condensed", size=12, color="#555149"),
             showarrow=False,
             xref="paper",
             yref="paper",
             x=0.5,
             y=0.5,
         )
+        fig.update_xaxes(visible=False)
+        fig.update_yaxes(visible=False, selector=dict(anchor="x"))
+        fig.update_layout(yaxis2=dict(visible=False))
     else:
         fig.add_trace(
             go.Scatter(
@@ -1889,13 +2097,16 @@ def render(snapshot: DashboardSnapshot | None = None) -> None:  # pragma: no cov
         unsafe_allow_html=True,
     )
 
-    # 30-day-cap panel (Branch C amendment 2026-05-07).
-    # Built from a fresh data-prep pass that reads paper_clock + kill_event +
-    # rebal_event tables. broker is None here so cap_violation / reconcile_drift
-    # rows are skipped — they require a live broker handle, which the read-only
-    # Streamlit dashboard does not need.
-    pc_panel = build_paper_clock_panel(broker=None)
-    st.markdown(paper_clock_panel_html(pc_panel), unsafe_allow_html=True)
+    # 30-day-cap comparison panel (Option B amendment 2026-05-08).
+    # Side-by-side: live vanilla TSMOM (run_id=DiCaprio) vs shadow
+    # regime-filtered TSMOM (run_id=Belfort). Each pulls
+    # paper_clock + kill_event + rebal_event scoped by run_id.
+    live_panel = build_paper_clock_panel(broker=None, run_id="DiCaprio")
+    shadow_panel = build_paper_clock_panel(broker=None, run_id="Belfort")
+    st.markdown(
+        comparison_panel_html(live_panel, shadow_panel),
+        unsafe_allow_html=True,
+    )
 
     st.markdown(
         _status_bar_html(snap, broker_connected=broker_connected),

@@ -164,6 +164,89 @@ def fire(
 # ---------------------------------------------------------------------------- typed helpers (PRD §10 rules)
 
 
+def alert_order_submitted(
+    *,
+    run_id: str,
+    symbol: str,
+    side: str,
+    qty: int,
+    reference_price: Decimal,
+    stop_price: Decimal,
+    order_id: str,
+    transport: WebhookTransport | None = None,
+) -> AlertResult:
+    """Fired when the runner submits a bracket order to the broker.
+
+    Distinct from `alert_order_fill` which fires when the order actually
+    fills. Submission != fill: paper orders placed after-hours sit
+    ACCEPTED until next market open.
+    """
+    return fire(
+        title=f"[{run_id}] Order submitted: {side.upper()} {qty} {symbol}",
+        message=(
+            f"Bracket order placed at ~${reference_price} with stop ${stop_price}. "
+            f"Awaiting fill (broker order {order_id})."
+        ),
+        severity="info",
+        fields={
+            "Run": run_id,
+            "Symbol": symbol,
+            "Side": side,
+            "Qty": str(qty),
+            "Reference": str(reference_price),
+            "Stop": str(stop_price),
+            "Order ID": order_id,
+        },
+        transport=transport,
+    )
+
+
+def alert_rebal_summary(
+    *,
+    run_id: str,
+    rebal_date: str,
+    nav: Decimal,
+    n_orders_submitted: int,
+    target_weights: list[dict[str, Any]],
+    drift_after: int,
+    forced: bool,
+    dry_run: bool,
+    transport: WebhookTransport | None = None,
+) -> AlertResult:
+    """End-of-rebal summary: orders submitted, target weights, NAV, drift.
+
+    One alert per rebal cycle. Complements per-order `alert_order_submitted`
+    by giving the operator a single roll-up of what happened.
+    """
+    weights_str = ", ".join(
+        f"{w['symbol']} {w['weight']:.1%}" for w in target_weights if w.get("weight")
+    ) or "(no nonzero weights)"
+    severity: Severity = "warning" if drift_after else "info"
+    flags = []
+    if forced:
+        flags.append("FORCED")
+    if dry_run:
+        flags.append("DRY-RUN")
+    flag_str = f" [{' '.join(flags)}]" if flags else ""
+    return fire(
+        title=f"[{run_id}] Rebal {rebal_date}{flag_str}: {n_orders_submitted} orders",
+        message=(
+            f"NAV ${nav}. Submitted {n_orders_submitted} bracket order(s). "
+            f"Reconcile drift: {drift_after}. Targets: {weights_str}."
+        ),
+        severity=severity,
+        fields={
+            "Run": run_id,
+            "Rebal date": rebal_date,
+            "NAV": str(nav),
+            "Orders submitted": str(n_orders_submitted),
+            "Reconcile drift": str(drift_after),
+            "Targets": weights_str[:1024],
+        },
+        transport=transport,
+    )
+
+
 def alert_order_fill(
     *,
     symbol: str,

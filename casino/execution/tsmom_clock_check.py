@@ -450,9 +450,7 @@ def run_daily_check(
 
     clock = paper_clock.fetch_paper_clock(run_id=run_id, db_path=db_path)
     days_elapsed_val = (
-        paper_clock.days_elapsed(run_id=run_id, db_path=db_path)
-        if clock is not None
-        else None
+        paper_clock.days_elapsed(run_id=run_id, db_path=db_path) if clock is not None else None
     )
     start_nav = clock.start_nav if clock is not None else Decimal("0")
 
@@ -639,14 +637,10 @@ def run_verdict(
         )
     if paper_sharpe is None or paper_sharpe < COMMIT_SHARPE_FLOOR:
         commit = False
-        reasons.append(
-            f"KILL: paper Sharpe {paper_sharpe} below floor {COMMIT_SHARPE_FLOOR}"
-        )
+        reasons.append(f"KILL: paper Sharpe {paper_sharpe} below floor {COMMIT_SHARPE_FLOOR}")
     if ks_p is not None and ks_p <= KS_COMMIT_PVALUE:
         commit = False
-        reasons.append(
-            f"KILL: KS p={ks_p:.4f} <= COMMIT threshold {KS_COMMIT_PVALUE}"
-        )
+        reasons.append(f"KILL: KS p={ks_p:.4f} <= COMMIT threshold {KS_COMMIT_PVALUE}")
     if commit:
         reasons.append("All COMMIT preconditions met.")
 
@@ -673,8 +667,16 @@ def run_verdict(
     # Write reports.
     target_reports = reports_dir if reports_dir is not None else Path("reports")
     target_reports.mkdir(parents=True, exist_ok=True)
-    csv_path = target_reports / "tsmom_paper_30day_verdict.csv"
-    md_path = target_reports / "tsmom_paper_30day_verdict.md"
+    # Parametrized filenames per run_id so the live (DiCaprio) and the
+    # shadow (Belfort) verdicts don't overwrite each other.
+    # The default run_id keeps the historical filename unchanged for
+    # backwards compatibility with existing scripts and dashboards.
+    if run_id == paper_clock.DEFAULT_RUN_ID:
+        csv_path = target_reports / "tsmom_paper_30day_verdict.csv"
+        md_path = target_reports / "tsmom_paper_30day_verdict.md"
+    else:
+        csv_path = target_reports / f"tsmom_paper_30day_verdict_{run_id}.csv"
+        md_path = target_reports / f"tsmom_paper_30day_verdict_{run_id}.md"
     _write_verdict_csv(csv_path, out)
     _write_verdict_md(md_path, out, clock=clock, kills=kills, rebals=rebals)
 
@@ -686,10 +688,11 @@ def run_verdict(
         else "Branch C is dead. Abandon TSMOM-alone; reassess strategy."
     )
     alerts.fire(
-        title=f"[ACTION REQUIRED] TSMOM 30-day verdict: {verdict}",
+        title=f"[ACTION REQUIRED] TSMOM 30-day verdict: {verdict} [{run_id}]",
         message=next_steps + "\n\n" + "\n".join(reasons),
         severity="warning" if verdict == "COMMIT" else "critical",
         fields={
+            "Run ID": run_id,
             "Verdict": verdict,
             "Days elapsed": str(days),
             "Rebals": str(len(rebals)),
@@ -720,7 +723,7 @@ def _write_verdict_csv(path: Path, v: VerdictResult) -> None:
         fh.write("metric,value\n")
         for k, val in rows:
             esc = val.replace('"', '""')
-            fh.write(f"{k},\"{esc}\"\n")
+            fh.write(f'{k},"{esc}"\n')
 
 
 def _write_verdict_md(
@@ -809,6 +812,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Do not engage kill switch even if a criterion fires (testing only).",
     )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=paper_clock.DEFAULT_RUN_ID,
+        help=(
+            "paper_clock run_id to scope queries to. Defaults to "
+            f"'{paper_clock.DEFAULT_RUN_ID}' for the live vanilla bot. "
+            "Pass 'Belfort' to evaluate the shadow simulator."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -818,17 +831,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        result = run_daily_check(engage_kill_switch=not args.no_kill_switch)
+        result = run_daily_check(
+            engage_kill_switch=not args.no_kill_switch,
+            run_id=args.run_id,
+        )
         logger.info(
-            "tsmom_clock_check: daily; kill_fired={} criteria={} days={}",
+            "tsmom_clock_check[{}]: daily; kill_fired={} criteria={} days={}",
+            args.run_id,
             result.kill_fired,
             result.triggered_criteria,
             result.days_elapsed,
         )
         if args.verdict:
-            v = run_verdict()
+            v = run_verdict(run_id=args.run_id)
             logger.warning(
-                "tsmom_clock_check: VERDICT={} sharpe={} rebals={} drift={:.4%}",
+                "tsmom_clock_check[{}]: VERDICT={} sharpe={} rebals={} drift={:.4%}",
+                args.run_id,
                 v.verdict,
                 v.paper_sharpe,
                 v.n_rebals,

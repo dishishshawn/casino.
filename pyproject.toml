@@ -78,12 +78,14 @@ module = [
     "casino.backtest.tsmom_baseline",
     "casino.backtest.carry_baseline",
     "casino.signals.ts_momentum",
+    "casino.signals.ts_momentum_regime",
     "casino.signals.carry",
+    "casino.execution.sim_broker",
 ]
 disallow_untyped_defs = false
 warn_return_any = false
 warn_unused_ignores = false
-disable_error_code = ["arg-type", "operator", "index", "return-value", "no-untyped-def", "call-overload", "attr-defined", "unreachable"]
+disable_error_code = ["arg-type", "operator", "index", "return-value", "no-untyped-def", "call-overload", "attr-defined", "unreachable", "type-arg"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

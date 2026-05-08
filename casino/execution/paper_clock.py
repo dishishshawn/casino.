@@ -24,7 +24,7 @@ Schema decisions:
 * The schema reuses ``casino.execution.book.get_book_conn`` so
   ``state.sqlite`` stays the single SQLite file for all execution state.
 * ``paper_clock`` is intentionally a single-row table (PK ``run_id``);
-  the runner uses a fixed ``run_id="tsmom_v1"`` so re-running the runner
+  the runner uses a fixed ``run_id="DiCaprio"`` so re-running the runner
   on day 7 doesn't reset the clock.
 
 Imported by ``casino.execution.tsmom_runner`` (writes start row + rebal
@@ -45,7 +45,7 @@ from casino.execution import book
 
 # The runner uses this constant `run_id` so re-invocations on subsequent
 # rebal days append rebal_event rows instead of resetting the clock.
-DEFAULT_RUN_ID = "tsmom_v1"
+DEFAULT_RUN_ID = "DiCaprio"
 
 # 30-day cap (Branch C amendment 2026-05-07).
 PAPER_CAP_DAYS = 30
