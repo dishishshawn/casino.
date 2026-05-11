@@ -121,7 +121,10 @@ def reconcile(
                     book_side="",
                     broker_notional=b.market_value,
                     book_notional=Decimal("0"),
-                    detail=f"broker holds {b.qty} {b.side} of {sym}; book has no row",
+                    detail=(
+                        f"Broker shows {b.qty} {b.side} of {sym}, but the "
+                        "system has no record of it"
+                    ),
                 )
             )
             continue
@@ -137,7 +140,10 @@ def reconcile(
                     book_side=k.side,
                     broker_notional=Decimal("0"),
                     book_notional=book_notional,
-                    detail=f"book has {k.qty} {k.side} of {sym}; broker has no position",
+                    detail=(
+                        f"System shows {k.qty} {k.side} of {sym}, but the "
+                        "broker has no matching position"
+                    ),
                 )
             )
             continue
@@ -154,7 +160,9 @@ def reconcile(
                     book_side=k.side,
                     broker_notional=b.market_value,
                     book_notional=Decimal(k.qty) * k.avg_entry_price,
-                    detail=f"side mismatch on {sym}: broker={b.side} book={k.side}",
+                    detail=(
+                        f"Direction mismatch on {sym}: broker shows {b.side}, system shows {k.side}"
+                    ),
                 )
             )
             continue
@@ -169,7 +177,10 @@ def reconcile(
                     book_side=k.side,
                     broker_notional=b.market_value,
                     book_notional=Decimal(k.qty) * k.avg_entry_price,
-                    detail=f"qty mismatch on {sym}: broker={b.qty} book={k.qty}",
+                    detail=(
+                        f"Quantity mismatch on {sym}: broker shows {b.qty} "
+                        f"shares, system shows {k.qty}"
+                    ),
                 )
             )
             continue
@@ -188,8 +199,9 @@ def reconcile(
                     broker_notional=b.market_value,
                     book_notional=book_notional,
                     detail=(
-                        f"price drift on {sym}: broker MV={b.market_value} "
-                        f"book entry-notional={book_notional} (Δ={diff})"
+                        f"Mark-to-market difference on {sym}: broker market "
+                        f"value=${b.market_value}, system entry-cost="
+                        f"${book_notional} (difference ${diff})"
                     ),
                 )
             )

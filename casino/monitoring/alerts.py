@@ -218,9 +218,10 @@ def alert_rebal_summary(
     One alert per rebal cycle. Complements per-order `alert_order_submitted`
     by giving the operator a single roll-up of what happened.
     """
-    weights_str = ", ".join(
-        f"{w['symbol']} {w['weight']:.1%}" for w in target_weights if w.get("weight")
-    ) or "(no nonzero weights)"
+    weights_str = (
+        ", ".join(f"{w['symbol']} {w['weight']:.1%}" for w in target_weights if w.get("weight"))
+        or "(no nonzero weights)"
+    )
     severity: Severity = "warning" if drift_after else "info"
     flags = []
     if forced:
@@ -323,12 +324,135 @@ def alert_reconciliation_drift(
     summary: str,
     transport: WebhookTransport | None = None,
 ) -> AlertResult:
-    """Reconciliation alert. PRD §10: any broker-vs-book mismatch is critical."""
+    """Reconciliation alert. PRD §10: any broker-vs-book mismatch is critical.
+
+    Wording is deliberately plain-English: the operator should be able to
+    read the embed and know (a) what's wrong, (b) why it matters, and
+    (c) where to look — without having to consult the source.
+    """
+    word = "issue" if n_drift == 1 else "issues"
+    intro = (
+        f"Alpaca and the system's internal records disagree on {n_drift} "
+        f"{'position' if n_drift == 1 else 'positions'}. Until this is "
+        "resolved the system can't trust its own state, so the next safety "
+        "check may halt trading. Investigate per RUNBOOK §5."
+    )
+    body = f"{intro}\n\n• " + summary.replace("; ", "\n• ")
     return fire(
-        title=f"Reconciliation drift: {n_drift} discrepanc{'y' if n_drift == 1 else 'ies'}",
-        message=summary[:4000],
+        title=f"Positions out of sync ({n_drift} {word})",
+        message=body[:4000],
         severity="critical",
-        fields={"# drift entries": str(n_drift)},
+        fields={"Issues found": str(n_drift)},
+        transport=transport,
+    )
+
+
+# Plain-English titles + one-line descriptions for each kill criterion.
+# Keep the keys in sync with `casino.execution.tsmom_clock_check`. New
+# criteria must be added here too — falling back to the criterion name is a
+# bug, not a fallback (the whole point of this helper is no jargon).
+_KILL_CRITERION_COPY: dict[str, tuple[str, str]] = {
+    "drawdown": (
+        "account is down too much from start",
+        "Total paper-trading losses crossed the kill threshold.",
+    ),
+    "single_day": (
+        "single-day loss exceeded the safety limit",
+        "One day's loss was larger than the safety limit allows.",
+    ),
+    "cap_violation": (
+        "a position exceeded portfolio size caps",
+        "Either gross exposure or a single position grew past the configured cap.",
+    ),
+    "reconcile_drift": (
+        "positions out of sync with broker",
+        "Alpaca and the system's internal records disagree on positions by "
+        "more than the safety limit. Sizing decisions can't be trusted until "
+        "this is fixed (RUNBOOK §5).",
+    ),
+    "ks_test": (
+        "paper returns no longer match the backtest",
+        "The distribution of paper-trade daily returns has diverged "
+        "significantly from the backtest baseline.",
+    ),
+}
+
+
+def _humanize_pct(d: Decimal) -> str:
+    """Render a fraction as a percentage with 2 decimals (e.g. 3.70%)."""
+    return f"{float(d) * 100:.2f}%"
+
+
+def _humanize_money(d: Decimal) -> str:
+    """Render a money amount with $ and thousands separators."""
+    try:
+        f = float(d)
+    except (TypeError, ValueError):
+        return str(d)
+    return f"${f:,.2f}"
+
+
+def alert_kill_criterion(
+    *,
+    criterion: str,
+    value: Decimal,
+    threshold: Decimal,
+    nav: Decimal,
+    days_elapsed: int | None,
+    detail: str,
+    transport: WebhookTransport | None = None,
+) -> AlertResult:
+    """Fired by ``tsmom_clock_check`` when a kill criterion trips.
+
+    Replaces the previous ad-hoc ``alerts.fire(title="... KILL CRITERION
+    [reconcile_drift]", ...)`` call which read like a log line. The new
+    embed leads with the plain-English reason, rounds raw decimals to
+    something a human can scan, and tells the operator that trading has
+    been disabled + where to recover.
+    """
+    plain_reason, explanation = _KILL_CRITERION_COPY.get(
+        criterion,
+        (criterion.replace("_", " "), f"Kill criterion {criterion!r} tripped."),
+    )
+
+    # Percent-style criteria render the value/threshold as percentages so
+    # "0.0370 vs 0.0100" doesn't show up as a raw Decimal in the embed.
+    pct_criteria = {"drawdown", "single_day", "cap_violation", "reconcile_drift"}
+    if criterion in pct_criteria:
+        value_str = _humanize_pct(value)
+        threshold_str = _humanize_pct(threshold)
+    else:
+        # ks_test is a p-value, kept as a fixed-decimal number.
+        try:
+            value_str = f"{float(value):.4f}"
+            threshold_str = f"{float(threshold):.4f}"
+        except (TypeError, ValueError):
+            value_str = str(value)
+            threshold_str = str(threshold)
+
+    body = (
+        f"{explanation}\n\n"
+        f"Trading has been disabled and any open orders cancelled. "
+        f"Investigate the cause, then re-arm by clearing the "
+        f"`trading_disabled` flag in `state.sqlite`.\n\n"
+        f"Technical detail: {detail}"
+    )
+
+    fields: dict[str, str] = {
+        "Reason": plain_reason,
+        "Measured": value_str,
+        "Safety limit": threshold_str,
+        "NAV": _humanize_money(nav),
+        "Status": "trading disabled",
+    }
+    if days_elapsed is not None:
+        fields["Paper-run day"] = str(days_elapsed)
+
+    return fire(
+        title=f"Trading halted — {plain_reason}",
+        message=body[:4000],
+        severity="critical",
+        fields=fields,
         transport=transport,
     )
 

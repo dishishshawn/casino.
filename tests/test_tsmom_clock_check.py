@@ -399,8 +399,10 @@ def test_run_daily_check_drawdown_engages_kill_switch(
     assert book.is_trading_disabled(db_path=state) is True
     # broker.close_all_positions was called.
     assert "SPY" in fake.closed_positions
-    # Discord alert fired.
-    assert any("KILL CRITERION" in c["title"] for c in capture.calls)
+    # Discord alert fired. New copy (Issue: jargon-y notifications) reads
+    # "Trading halted — account is down too much from start".
+    assert any("Trading halted" in c["title"] for c in capture.calls)
+    assert any("down too much" in c["title"] for c in capture.calls)
 
 
 def test_run_daily_check_engage_kill_switch_false_skips_flatten(

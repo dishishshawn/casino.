@@ -433,6 +433,51 @@ def test_submit_order_records_to_book(isolated_state, broker_factory) -> None:
     )
     open_orders = book.fetch_open_orders(db_path=isolated_state)
     assert any(o.broker_order_id == order.id for o in open_orders)
+    # The placeholder row has been swapped out — no pending- leftovers.
+    assert not any(o.broker_order_id.startswith("pending-") for o in open_orders)
+
+
+def test_submit_order_writes_pending_row_before_broker_call(
+    isolated_state: Path,
+    broker_factory,
+) -> None:
+    """Regression: 2026-05-11 incident — Ctrl-C between broker call and book
+    write left Alpaca holding 5 SPY with no book row, tripping the reconcile
+    drift kill criterion. The fix writes a "submission_pending" row BEFORE
+    the broker call; even if the broker call raises, the row remains for
+    operator recovery.
+    """
+    broker, _ = broker_factory()
+
+    # Replace the broker's submit_bracket_order with a failing stub so we
+    # can verify the pre-broker pending row was persisted.
+    def _boom(**_kw: Any) -> BrokerOrder:
+        raise RuntimeError("simulated broker outage")
+
+    broker.submit_bracket_order = _boom  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="simulated broker outage"):
+        submit_order(
+            broker=broker,
+            symbol="AAA",
+            side="buy",
+            entry_price=Decimal("100"),
+            stop_price=Decimal("99"),
+            db_path=isolated_state,
+        )
+
+    # Inspect the orders table directly — the failed-but-recorded row uses
+    # status="broker_rejected" which fetch_open_orders intentionally
+    # excludes, so go through raw SQL.
+    with book.get_book_conn(isolated_state) as conn:
+        rows = conn.execute("SELECT broker_order_id, status, symbol, qty FROM orders").fetchall()
+
+    assert len(rows) == 1
+    broker_order_id, status, symbol, qty = rows[0]
+    assert broker_order_id.startswith("pending-casino-")
+    assert status == "broker_rejected"
+    assert symbol == "AAA"
+    assert qty > 0  # sized normally; exact qty depends on PRD §8 caps
 
 
 # ---------------------------------------------------------------------------- kill switch

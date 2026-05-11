@@ -97,7 +97,37 @@ def test_alert_reconciliation_drift_critical() -> None:
     )
     embed = captured[0][1]["embeds"][0]
     assert embed["color"] == 0xE74C3C
+    # New copy splits the semicolon-separated summary into bullet lines
+    # and prepends a plain-English explainer. Verify both halves landed.
+    assert "Positions out of sync" in embed["title"]
     assert "AAA broker_only" in embed["description"]
+    assert "BBB qty_mismatch" in embed["description"]
+    assert "RUNBOOK" in embed["description"]
+
+
+def test_alert_kill_criterion_plain_english_and_pct() -> None:
+    captured, tx = _capture()
+    alerts.alert_kill_criterion(
+        criterion="reconcile_drift",
+        value=Decimal("0.03696150344177440814098986236"),
+        threshold=Decimal("0.01"),
+        nav=Decimal("100009.46"),
+        days_elapsed=None,
+        detail="|sum(broker_mv - book_notional)|=$3696.5 nav=$100009.46 drift=3.6962% entries=1",
+        transport=tx,
+    )
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0xE74C3C
+    assert "Trading halted" in embed["title"]
+    assert "positions out of sync with broker" in embed["title"]
+    # Percentages are rounded for human readability.
+    field_map = {f["name"]: f["value"] for f in embed["fields"]}
+    assert field_map["Measured"] == "3.70%"
+    assert field_map["Safety limit"] == "1.00%"
+    assert field_map["NAV"] == "$100,009.46"
+    assert field_map["Status"] == "trading disabled"
+    # Recovery hint is included.
+    assert "trading_disabled" in embed["description"]
 
 
 def test_alert_unhandled_exception_critical() -> None:

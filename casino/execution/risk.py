@@ -319,27 +319,70 @@ def submit_order(
         portfolio=snap,
     )
     coid = client_order_id or f"casino-{uuid.uuid4().hex[:16]}"
-    order = broker.submit_bracket_order(
-        symbol=sized.symbol,
-        qty=sized.qty,
-        side=sized.side,
-        stop_price=sized.stop_price,
-        take_profit_price=take_profit_price,
-        client_order_id=coid,
-    )
+
+    # Write a "submission_pending" book row BEFORE calling the broker so a
+    # process kill / network hiccup between broker call and final book write
+    # can never leave the broker holding a position the book has no record
+    # of. Pre-2026-05-11 this was a real failure mode — a manual --force run
+    # was Ctrl-C'd between the two calls, and the resulting drift tripped
+    # the reconcile_drift kill criterion. The pending row is keyed by a
+    # placeholder broker_order_id; the client_order_id is the recovery
+    # handle (it survives across processes and is unique on Alpaca).
+    placeholder_id = f"pending-{coid}"
     book.insert_order(
-        broker_order_id=order.id,
-        client_order_id=order.client_order_id or coid,
+        broker_order_id=placeholder_id,
+        client_order_id=coid,
         symbol=sized.symbol,
         side=sized.side,
         qty=sized.qty,
         stop_price=sized.stop_price,
         limit_price=None,
-        submitted_at_utc=order.submitted_at,
-        status=order.status,
+        submitted_at_utc=None,
+        status="submission_pending",
         notional_estimate=sized.notional,
         db_path=db_path,
     )
+
+    try:
+        order = broker.submit_bracket_order(
+            symbol=sized.symbol,
+            qty=sized.qty,
+            side=sized.side,
+            stop_price=sized.stop_price,
+            take_profit_price=take_profit_price,
+            client_order_id=coid,
+        )
+    except Exception:
+        # Broker rejected or call never reached Alpaca. The pending row
+        # stays for audit; status flips so it isn't confused with an
+        # actually-in-flight order. Re-raise so the caller still sees
+        # the failure.
+        book.update_order_status(
+            broker_order_id=placeholder_id,
+            status="broker_rejected",
+            db_path=db_path,
+        )
+        raise
+
+    # Broker accepted. Swap the placeholder broker_order_id for the real
+    # one and persist the broker-reported status / submitted_at.
+    submitted_iso = order.submitted_at.isoformat() if order.submitted_at is not None else None
+    with book.get_book_conn(db_path) as conn:
+        conn.execute(
+            (
+                "UPDATE orders SET broker_order_id = ?, status = ?, "
+                "submitted_at_utc = COALESCE(?, submitted_at_utc), "
+                "client_order_id  = ? "
+                "WHERE broker_order_id = ?"
+            ),
+            (
+                order.id,
+                order.status,
+                submitted_iso,
+                order.client_order_id or coid,
+                placeholder_id,
+            ),
+        )
     logger.info(
         "risk: submitted bracket {} {} {} @ ~{} (stop {}, risk ${}, nav ${})",
         sized.side,

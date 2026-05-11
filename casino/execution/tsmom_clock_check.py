@@ -490,17 +490,13 @@ def run_daily_check(
             run_id=run_id,
             db_path=db_path,
         )
-        alerts.fire(
-            title=f"TSMOM 30-day cap KILL CRITERION [{s.name}]",
-            message=s.detail,
-            severity="critical",
-            fields={
-                "Criterion": s.name,
-                "Value": str(s.value),
-                "Threshold": str(s.threshold),
-                "NAV": str(nav),
-                "Days elapsed": str(days_elapsed_val),
-            },
+        alerts.alert_kill_criterion(
+            criterion=s.name,
+            value=s.value,
+            threshold=s.threshold,
+            nav=nav,
+            days_elapsed=days_elapsed_val,
+            detail=s.detail,
             transport=transport,
         )
 
