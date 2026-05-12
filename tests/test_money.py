@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from casino._money import MONEY_QUANTUM, round_money
+from casino._money import MONEY_QUANTUM, floor_shares, round_money
 
 
 def test_round_money_two_decimal_quantum() -> None:
@@ -80,3 +80,65 @@ def test_runners_share_the_canonical_helper() -> None:
     assert tsmom_shadow_runner._round_money is _money.round_money, (
         "tsmom_shadow_runner._round_money diverged from casino._money.round_money"
     )
+
+
+# ---------------------------------------------------------------------------- floor_shares
+
+
+@pytest.mark.parametrize(
+    "target_dollars,reference_price,expected",
+    [
+        # Exact divisions — no rounding needed.
+        (Decimal("1000.00"), Decimal("100.00"), 10),
+        (Decimal("950.00"), Decimal("100.00"), 9),
+        (Decimal("0.00"), Decimal("100.00"), 0),
+        # Pre-2026-05-12 the live runner used ROUND_HALF_UP and would have
+        # returned 11 here; shadow rounded DOWN and returned 10. Task 47
+        # unified both to floor-down (10).
+        (Decimal("1050.00"), Decimal("100.00"), 10),
+        (Decimal("1051.00"), Decimal("100.00"), 10),
+        (Decimal("1099.99"), Decimal("100.00"), 10),
+        # Just under one share — must return 0, not 1.
+        (Decimal("99.99"), Decimal("100.00"), 0),
+        # Realistic TSMOM sizing: ~10% of $100k NAV / ~$430 SPY.
+        (Decimal("10000.00"), Decimal("430.00"), 23),
+        # Negative target_dollars shouldn't happen in practice (planner
+        # filters with `if target_dollars <= 0: continue`) but the helper
+        # rounds towards zero, so the integer result follows ROUND_DOWN.
+        (Decimal("-50.00"), Decimal("100.00"), 0),
+    ],
+)
+def test_floor_shares_cases(
+    target_dollars: Decimal, reference_price: Decimal, expected: int
+) -> None:
+    """Each case pins floor-down semantics. ROUND_HALF_UP would fail many of these."""
+    assert floor_shares(target_dollars, reference_price) == expected
+
+
+def test_floor_shares_zero_reference_returns_zero() -> None:
+    """Defensive: never divide by zero. Planner emits a skip on zero qty."""
+    assert floor_shares(Decimal("1000"), Decimal("0")) == 0
+    assert floor_shares(Decimal("1000"), Decimal("-1")) == 0
+
+
+def test_floor_shares_returns_int() -> None:
+    """Return type is int, not Decimal — share counts are integers in v1."""
+    result = floor_shares(Decimal("1000"), Decimal("100"))
+    assert isinstance(result, int)
+
+
+def test_runners_share_floor_shares() -> None:
+    """Regression for task 47: both runners use casino._money.floor_shares.
+
+    Pre-fix the live runner used ROUND_HALF_UP inline and the shadow used
+    ROUND_DOWN inline, producing live/shadow divergence on every name
+    where ``target_dollars / ref`` had a fractional part >= 0.5. The
+    helper now exists as a single canonical callable both runners
+    reference; this test asserts the identity to prevent a future
+    refactor reintroducing the divergence.
+    """
+    from casino import _money
+    from casino.execution import tsmom_runner, tsmom_shadow_runner
+
+    assert tsmom_runner.floor_shares is _money.floor_shares
+    assert tsmom_shadow_runner.floor_shares is _money.floor_shares

@@ -2170,13 +2170,26 @@
         "dependencies": [],
         "priority": "medium",
         "subtasks": []
+      },
+      {
+        "id": 47,
+        "title": "Unify live/shadow whole-share qty rounding",
+        "description": "Discovered while doing task 46: the live and shadow runners use DIFFERENT rounding for the share-count integer conversion despite identical comments saying 'whole-share qty floored conservatively'. Live (tsmom_runner.py:314) uses ROUND_HALF_UP; shadow (tsmom_shadow_runner.py:266) uses ROUND_DOWN. Result: live can size 1 share over target on every name where target_dollars/ref has a fractional part >= 0.5; shadow always sizes down. This contaminates the Belfort-vs-DiCaprio comparison by exactly the bug pattern task 46 deduped.",
+        "details": "Pick ROUND_DOWN \u2014 it matches the docstring intent ('floored conservatively') and never sizes over the per-name cap. Live wins by being made consistent with shadow, not the other way around. Implementation: extend casino/_money.py with floor_shares(target_dollars: Decimal, reference_price: Decimal) -> int (uses ROUND_DOWN; returns 0 if reference_price <= 0). Replace the inline qty calc on both sides with the helper. Add tests/test_money.py cases (e.g., 1051/100 -> 10 shares, 1050/100 -> 10, 950/100 -> 9) plus an identity check that both runners reference the same callable. The live runner has not yet entered the 30-day clock so changing sizing behavior is safe; the Belfort shadow simulator is mid-run but already on ROUND_DOWN so its history is unaffected.",
+        "testStrategy": "tests/test_money.py extended with explicit floor_shares cases and the identity assertion (tsmom_runner.floor_shares is tsmom_shadow_runner.floor_shares is _money.floor_shares). grep -nE 'to_integral_value.*rounding=ROUND' casino/execution/ returns no matches. Full pytest pass (354 -> 358-ish).",
+        "status": "done",
+        "dependencies": [
+          46
+        ],
+        "priority": "medium",
+        "subtasks": []
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-11T23:55:00.000Z",
-      "taskCount": 37,
-      "completedCount": 34,
+      "lastModified": "2026-05-12T00:10:00.000Z",
+      "taskCount": 38,
+      "completedCount": 35,
       "tags": [
         "master"
       ],

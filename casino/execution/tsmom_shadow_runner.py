@@ -53,12 +53,13 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from casino._money import floor_shares
 from casino._money import round_money as _round_money
 from casino.config import get_config
 from casino.data import store
@@ -259,7 +260,7 @@ def plan_shadow_actions(
         if target_dollars <= Decimal("0"):
             continue
         ref = tw.reference_price
-        qty = int((target_dollars / ref).to_integral_value(rounding=ROUND_DOWN))
+        qty = floor_shares(target_dollars, ref)
         if qty <= 0:
             actions.append(
                 ShadowRebalAction(
