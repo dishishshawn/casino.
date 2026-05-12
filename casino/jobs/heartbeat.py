@@ -40,6 +40,7 @@ from casino.config import get_config
 from casino.execution import book, paper_clock, reconcile
 from casino.execution.alpaca_broker import AlpacaBroker, build_default_broker
 from casino.monitoring import alerts
+from casino.signals.ts_momentum import TSMOM_UNIVERSE
 
 # OHLCV gap warning threshold (calendar days). 5 covers a long weekend +
 # Monday holiday + Tuesday-morning data lag without false-warning.
@@ -53,19 +54,11 @@ HEARTBEAT_DRAWDOWN_WARN: Decimal = Decimal("0.05")
 # Reconcile drift threshold for warning (matches the verdict gate).
 HEARTBEAT_DRIFT_WARN: Decimal = Decimal("0.005")
 
-# TSMOM universe used to assess DuckDB OHLCV freshness.
-TSMOM_UNIVERSE: tuple[str, ...] = (
-    "SPY",
-    "QQQ",
-    "IWM",
-    "EFA",
-    "EEM",
-    "TLT",
-    "IEF",
-    "GLD",
-    "DBC",
-    "USO",
-)
+# TSMOM_UNIVERSE is re-imported from casino.signals.ts_momentum so the
+# OHLCV-freshness gate and the live/shadow runners are guaranteed to
+# watch and trade the same set. Pre-2026-05-11 this was a local copy
+# (P1 #7 from .taskmaster/docs/structure_review.md).
+__all__ = ["TSMOM_UNIVERSE"]
 
 
 @dataclass(frozen=True)
@@ -107,10 +100,14 @@ def _latest_ohlcv_date(duckdb_path: Path) -> date | None:
     if not row or row[0] is None:
         return None
     ts = row[0]
-    if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
-        return ts.astimezone(UTC).date()
-    if hasattr(ts, "date"):
+    # DuckDB returns Any from .fetchone(); narrow before .date() so mypy
+    # can prove the date | None contract without falling back to Any.
+    if isinstance(ts, datetime):
+        if ts.tzinfo is not None:
+            return ts.astimezone(UTC).date()
         return ts.date()
+    if isinstance(ts, date):
+        return ts
     return None
 
 

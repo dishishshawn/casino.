@@ -32,6 +32,31 @@ _TARGET_VOL_ANN: float = 0.10  # 10% annualized vol target per asset
 _MIN_VOL_ANN: float = 0.05  # floor to prevent infinite leverage on bond-like assets
 _BDAYS_PER_YEAR: int = 252
 
+# Canonical TSMOM universe — 10 retail-tradeable cross-asset ETFs.
+#
+# This tuple is the single source of truth for every consumer:
+# * casino.execution.tsmom_runner (live rebal universe)
+# * casino.execution.tsmom_shadow_runner (shadow rebal universe — must match)
+# * casino.jobs.heartbeat (OHLCV-freshness gate; must trade and watch the
+#   same set, otherwise the system can trade a ticker the freshness gate
+#   isn't monitoring)
+#
+# Pre-2026-05-11 this constant was duplicated in tsmom_runner and
+# heartbeat (P1 #7 from .taskmaster/docs/structure_review.md). Drift
+# between copies would have silently broken the freshness contract.
+TSMOM_UNIVERSE: tuple[str, ...] = (
+    "SPY",
+    "QQQ",
+    "IWM",
+    "EFA",
+    "EEM",
+    "TLT",
+    "IEF",
+    "GLD",
+    "DBC",
+    "USO",
+)
+
 
 def load_ohlcv_panel(
     *,

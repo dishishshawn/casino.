@@ -80,6 +80,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from casino._money import round_money as _round_money
 from casino.config import get_config
 from casino.execution import book, paper_clock, reconcile
 from casino.execution.alpaca_broker import AlpacaBroker, build_default_broker
@@ -91,24 +92,19 @@ from casino.execution.risk import (
     submit_order,
 )
 from casino.monitoring import alerts
-from casino.signals.ts_momentum import compute_tsmom_panel, load_ohlcv_panel
+from casino.signals.ts_momentum import (
+    TSMOM_UNIVERSE,
+    compute_tsmom_panel,
+    load_ohlcv_panel,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
 
-# Universe — matches universe_tsmom.txt (10 cross-asset ETFs, retail-tradeable).
-TSMOM_UNIVERSE: tuple[str, ...] = (
-    "SPY",
-    "QQQ",
-    "IWM",
-    "EFA",
-    "EEM",
-    "TLT",
-    "IEF",
-    "GLD",
-    "DBC",
-    "USO",
-)
+# TSMOM_UNIVERSE is re-exported above so callers that historically wrote
+# ``from casino.execution.tsmom_runner import TSMOM_UNIVERSE`` keep
+# working. The canonical definition lives in casino.signals.ts_momentum
+# (see structure_review P1 #7).
 
 # Broker-side stop level for every long entry. PRD §8 + CLAUDE.md rule 3.
 # 10% is below realistic monthly TSMOM volatility envelope (vol-target=10%
@@ -231,10 +227,6 @@ def latest_target_weights(
             )
         )
     return out
-
-
-def _round_money(d: Decimal) -> Decimal:
-    return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def plan_rebal_actions(
@@ -613,9 +605,7 @@ def run_rebal(
         rebal_date=today.isoformat(),
         nav=nav_now,
         n_orders_submitted=len(result.submitted_order_ids),
-        target_weights=[
-            {"symbol": tw.symbol, "weight": tw.weight} for tw in targets
-        ],
+        target_weights=[{"symbol": tw.symbol, "weight": tw.weight} for tw in targets],
         drift_after=result.drift_after,
         forced=force,
         dry_run=dry_run,

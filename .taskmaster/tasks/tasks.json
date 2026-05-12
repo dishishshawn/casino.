@@ -2133,19 +2133,56 @@
         ],
         "priority": "high",
         "subtasks": []
+      },
+      {
+        "id": 44,
+        "title": "Tighten mypy on signal modules (P1 #9 from structure_review)",
+        "description": "Drop arg-type and return-value from the mypy disable list for casino.signals.ts_momentum, ts_momentum_regime, and carry. The signals path computes the weight vector the live runner trades on; an untyped NaN slip or wrong-type return can silently misweight a position and cost real money.",
+        "details": "Today pyproject.toml lines 71-88 turn mypy effectively OFF for nine modules. This task narrows the bypass on the three signal modules only (backtest baselines and sim_broker stay on the legacy override pending a follow-up). Steps: 1) split the [[tool.mypy.overrides]] block in pyproject.toml so casino.signals.{ts_momentum, ts_momentum_regime, carry} get a narrower disable list (drop 'arg-type' and 'return-value', keep the pandas/Decimal interop allowances). 2) Run uv run mypy on the three modules; fix each error with either a real type annotation or a narrow per-line '# type: ignore[code]' annotation at the call site (never re-broaden the module-level bypass). 3) Re-run the full test suite to confirm no behavior change; the goal is to surface latent bugs, not hide them. See .taskmaster/docs/money_risk_remediation.md for the long-form rationale.",
+        "testStrategy": "uv run mypy casino/signals/ts_momentum.py casino/signals/ts_momentum_regime.py casino/signals/carry.py exits 0 with arg-type and return-value enabled. Full pytest pass (no behavior change). Visual grep: the three modules no longer appear in the broad-disable override list.",
+        "status": "done",
+        "dependencies": [
+          45
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 45,
+        "title": "Single source for TSMOM_UNIVERSE (P1 #7 from structure_review)",
+        "description": "The 10-symbol TSMOM_UNIVERSE tuple is duplicated in casino/execution/tsmom_runner.py and casino/jobs/heartbeat.py. The day the runner's universe is updated and heartbeat's isn't, the system trades a ticker the OHLCV-freshness gate isn't watching. Centralize in casino/signals/ts_momentum.py and have all consumers import from there.",
+        "details": "Move TSMOM_UNIVERSE to casino/signals/ts_momentum.py (which already owns load_ohlcv_panel and compute_tsmom_panel; the canonical TSMOM signal module). Update three consumers: casino/execution/tsmom_runner.py (drop local copy, import), casino/execution/tsmom_shadow_runner.py (already imports from tsmom_runner; switch to signals.ts_momentum), casino/jobs/heartbeat.py (drop local copy, import). Add a test in tests/test_signals.py (or extend tests/test_heartbeat.py) that asserts the three consumers reference the same tuple object \u2014 prevents future drift.",
+        "testStrategy": "grep -E '^TSMOM_UNIVERSE' casino/ returns exactly one match: casino/signals/ts_momentum.py. A new test asserts tsmom_runner.TSMOM_UNIVERSE is signals.ts_momentum.TSMOM_UNIVERSE is heartbeat.TSMOM_UNIVERSE (identity, not just equality). Full pytest pass.",
+        "status": "done",
+        "dependencies": [
+          46
+        ],
+        "priority": "high",
+        "subtasks": []
+      },
+      {
+        "id": 46,
+        "title": "Single source for round_money (P2 #13 from structure_review)",
+        "description": "_round_money is duplicated in casino/execution/tsmom_runner.py:236-237 and casino/execution/tsmom_shadow_runner.py:127-128. Today both use ROUND_HALF_UP at two decimals. The day one drifts (e.g., ROUND_DOWN for conservatism on one side), live and shadow sizing diverge and contaminate the Belfort-vs-DiCaprio comparison.",
+        "details": "Create casino/_money.py with a public 'round_money(d: Decimal) -> Decimal' that quantizes to Decimal('0.01') with ROUND_HALF_UP. Pure function, no internal deps beyond decimal. Replace both private _round_money definitions with imports. Add tests/test_money.py with explicit cases (e.g., Decimal('0.125') -> Decimal('0.13'), Decimal('-0.005') -> Decimal('-0.01')) pinning the rounding semantics \u2014 this is the contract that has to hold between runners.",
+        "testStrategy": "grep '_round_money' casino/ returns zero matches. tests/test_money.py passes with explicit rounding cases. tests/test_tsmom_runner.py and tests/test_tsmom_shadow_runner.py still pass unchanged.",
+        "status": "done",
+        "dependencies": [],
+        "priority": "medium",
+        "subtasks": []
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-07T20:47:30.219Z",
-      "taskCount": 34,
-      "completedCount": 31,
+      "lastModified": "2026-05-11T23:55:00.000Z",
+      "taskCount": 37,
+      "completedCount": 34,
       "tags": [
         "master"
       ],
       "created": "2026-05-07T20:48:51.999Z",
       "description": "Tasks for master context",
-      "updated": "2026-05-07T20:52:02.800Z"
+      "updated": "2026-05-11T23:55:00.000Z"
     }
   }
 }

@@ -69,23 +69,44 @@ disallow_subclassing_any = false
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-# DataFrame iloc / pivot / itertuples produce union types mypy cannot follow
-# even after explicit casts; relaxed here, runtime correctness covered by tests.
+# Backtest baselines + sim_broker: pandas iloc / pivot / itertuples produce
+# union types mypy cannot follow even after explicit casts. Relaxed
+# wholesale here; runtime correctness covered by tests. These are NOT
+# on the live signal path. Tightening them is queued as a follow-up to
+# task 44 (.taskmaster/docs/money_risk_remediation.md).
 module = [
     "casino.backtest.sue_baseline",
     "casino.backtest.composite_baseline",
     "casino.backtest.finbert_baseline",
     "casino.backtest.tsmom_baseline",
     "casino.backtest.carry_baseline",
-    "casino.signals.ts_momentum",
-    "casino.signals.ts_momentum_regime",
-    "casino.signals.carry",
     "casino.execution.sim_broker",
 ]
 disallow_untyped_defs = false
 warn_return_any = false
 warn_unused_ignores = false
 disable_error_code = ["arg-type", "operator", "index", "return-value", "no-untyped-def", "call-overload", "attr-defined", "unreachable", "type-arg"]
+
+[[tool.mypy.overrides]]
+# Live signal modules — these compute the weights the runner trades on,
+# so the bypass is narrower: arg-type and return-value stay ENABLED.
+# Other pandas/Decimal pain (operator, index, attr-defined, ...) still
+# requires per-line `# type: ignore[code]` annotations at the call site,
+# never a module-level reintroduction of the broad bypass.
+#
+# Task 44 (P1 #9 from .taskmaster/docs/structure_review.md) split this
+# block out of the broad-bypass on 2026-05-11. The signal path is the
+# closest module to the wallet; arg-type and return-value have the
+# highest signal-to-noise ratio for catching real bugs.
+module = [
+    "casino.signals.ts_momentum",
+    "casino.signals.ts_momentum_regime",
+    "casino.signals.carry",
+]
+disallow_untyped_defs = false
+warn_return_any = false
+warn_unused_ignores = false
+disable_error_code = ["operator", "index", "no-untyped-def", "call-overload", "attr-defined", "unreachable", "type-arg"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

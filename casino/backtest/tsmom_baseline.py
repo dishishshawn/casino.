@@ -78,7 +78,9 @@ def _backtest_weights_returns(
     if rebalance == "daily":
         rebal_mask = pd.Series(True, index=w.index)
     elif rebalance == "weekly":
-        rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+        rebal_mask = (
+            pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+        )
     elif rebalance == "biweekly":
         # Biweekly = every-other ISO-week boundary: rebalance at the first day of a
         # new ISO week whose week number has even parity. Approximates "every 10
@@ -132,7 +134,9 @@ def _backtest_weights(
         months = pd.Series(idx_naive.to_period("M"), index=w.index)
         rebal_mask = months.ne(months.shift(1)).fillna(True)
     elif rebalance == "weekly":
-        rebal_mask = pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+        rebal_mask = (
+            pd.Series(w.index.isocalendar().week.values, index=w.index).diff().fillna(1) != 0
+        )
     elif rebalance == "biweekly":
         weeks = pd.Series(w.index.isocalendar().week.values, index=w.index)
         new_week = weeks.diff().fillna(1) != 0
@@ -150,11 +154,7 @@ def _backtest_weights(
     sigma = float(port_ret.std(ddof=1))
     sharpe = mu / sigma * np.sqrt(_BDAYS_PER_YEAR) if sigma > 0 else float("nan")
     downside_sigma = float(port_ret.clip(upper=0).std(ddof=1))
-    sortino = (
-        mu / downside_sigma * np.sqrt(_BDAYS_PER_YEAR)
-        if downside_sigma > 0
-        else float("nan")
-    )
+    sortino = mu / downside_sigma * np.sqrt(_BDAYS_PER_YEAR) if downside_sigma > 0 else float("nan")
     cum = (1.0 + port_ret).cumprod()
     max_dd = float((cum / cum.cummax() - 1.0).min())
     total_return = float(cum.iloc[-1] - 1.0)
@@ -230,9 +230,7 @@ def run_tsmom(
     db_path: Path | None = None,
     save_csv: bool = True,
 ) -> TSMomResult:
-    prices = ts_momentum.load_ohlcv_panel(
-        start=start, end=end, universe=universe, db_path=db_path
-    )
+    prices = ts_momentum.load_ohlcv_panel(start=start, end=end, universe=universe, db_path=db_path)
     if prices.empty:
         raise RuntimeError(
             f"no OHLCV in [{start.date()}..{end.date()}] for universe {universe}. "
@@ -276,7 +274,9 @@ def run_tsmom(
         logger.info("tsmom result written to {}", out_path)
 
     avg_w = {col: float(np.nanmean(weights[col].abs())) for col in weights.columns}
-    yearly_sharpe = {k.removeprefix("yearly_"): v for k, v in metrics.items() if k.startswith("yearly_")}
+    yearly_sharpe = {
+        k.removeprefix("yearly_"): v for k, v in metrics.items() if k.startswith("yearly_")
+    }
 
     pass_sharpe = sharpe >= 0.5
     pass_dd = max_dd > -0.25

@@ -53,12 +53,13 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from casino._money import round_money as _round_money
 from casino.config import get_config
 from casino.data import store
 from casino.execution import paper_clock
@@ -66,10 +67,9 @@ from casino.execution.sim_broker import SimBroker
 from casino.execution.tsmom_runner import (
     DEFAULT_STOP_FRACTION,
     HISTORY_DAYS,
-    TSMOM_UNIVERSE,
     TargetWeight,
 )
-from casino.signals.ts_momentum import load_ohlcv_panel
+from casino.signals.ts_momentum import TSMOM_UNIVERSE, load_ohlcv_panel
 from casino.signals.ts_momentum_regime import (
     DEFAULT_BOND_LEGS,
     DEFAULT_LONG_RATE,
@@ -122,10 +122,6 @@ class ShadowRebalRunResult:
 
 def _today_utc() -> date:
     return datetime.now(tz=UTC).date()
-
-
-def _round_money(d: Decimal) -> Decimal:
-    return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _load_recent_prices(

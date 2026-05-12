@@ -311,9 +311,7 @@ def insert_kill_event(
 ) -> int:
     """Persist one kill-criterion firing. Returns the new row id."""
     if criterion not in KILL_CRITERIA:
-        raise ValueError(
-            f"unknown criterion {criterion!r}; must be one of {KILL_CRITERIA}"
-        )
+        raise ValueError(f"unknown criterion {criterion!r}; must be one of {KILL_CRITERIA}")
     init_schema(db_path)
     with book.get_book_conn(db_path) as conn:
         cur = conn.execute(
