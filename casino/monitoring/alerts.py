@@ -181,10 +181,12 @@ def alert_order_submitted(
     fills. Submission != fill: paper orders placed after-hours sit
     ACCEPTED until next market open.
     """
+    ref_str = _humanize_money(reference_price)
+    stop_str = _humanize_money(stop_price)
     return fire(
         title=f"[{run_id}] Order submitted: {side.upper()} {qty} {symbol}",
         message=(
-            f"Bracket order placed at ~${reference_price} with stop ${stop_price}. "
+            f"Bracket order placed at ~{ref_str} with stop {stop_str}. "
             f"Awaiting fill (broker order {order_id})."
         ),
         severity="info",
@@ -193,8 +195,8 @@ def alert_order_submitted(
             "Symbol": symbol,
             "Side": side,
             "Qty": str(qty),
-            "Reference": str(reference_price),
-            "Stop": str(stop_price),
+            "Reference": ref_str,
+            "Stop": stop_str,
             "Order ID": order_id,
         },
         transport=transport,

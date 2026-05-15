@@ -415,6 +415,81 @@ def test_run_rebal_end_to_end_roundtrip(
     assert rebals[0].n_orders_submitted >= 1
 
 
+def test_run_rebal_logs_and_alerts_actual_submitted_qty(
+    state: Path,
+    broker_factory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for 2026-05-15: ``bracket-bought`` log + ``alert_order_submitted``
+    must report the qty risk.submit_order actually sent to the broker,
+    not the planner's intent.
+
+    Pre-fix both surfaces used ``a.qty`` (planner target_dollars / ref),
+    so on every name where size_position clipped (the typical ¼-Kelly
+    case) the operator saw 321 shares in Discord while only 120 went
+    live. After the fix both surfaces read ``ord_resp.qty``.
+    """
+    import httpx
+
+    from casino.execution import tsmom_runner
+    from casino.monitoring import alerts as alerts_mod
+
+    broker, fake = broker_factory(equity=Decimal("100000"))
+    syms = ["SPY", "QQQ", "TLT"]
+    prices = _synthetic_prices(syms, days=400)
+    _patch_load_ohlcv(monkeypatch, prices)
+
+    # Capture the kwargs every alert_order_submitted call receives, then
+    # delegate to the real helper with a no-op transport so we still
+    # exercise the production code path. Transport must return an
+    # httpx.Response — alerts.send_alert reads .status_code on the way out.
+    captured_alerts: list[dict] = []
+    real_alert = alerts_mod.alert_order_submitted
+
+    def _noop_tx(_url: str, _payload: dict) -> httpx.Response:  # type: ignore[type-arg]
+        return httpx.Response(204)
+
+    def capture(**kw):  # type: ignore[no-untyped-def]
+        captured_alerts.append(dict(kw))
+        return real_alert(**{**kw, "transport": _noop_tx})
+
+    monkeypatch.setattr(tsmom_runner.alerts, "alert_order_submitted", capture)
+
+    result = run_rebal(
+        broker=broker,
+        today=date(2026, 5, 29),
+        db_path=state,
+        universe=syms,
+    )
+    assert result.skipped_reason is None
+    assert len(fake.submitted_requests) >= 1
+    assert len(captured_alerts) >= 1
+
+    # 1) For every alert, the qty reported must equal the qty that went
+    #    to the broker. This is the core bug fix.
+    submitted_qty_by_symbol = {r.symbol: int(r.qty) for r in fake.submitted_requests}
+    for alert in captured_alerts:
+        sym = alert["symbol"]
+        assert sym in submitted_qty_by_symbol, f"alert for {sym} but no broker submission"
+        assert alert["qty"] == submitted_qty_by_symbol[sym], (
+            f"alert qty {alert['qty']} for {sym} != broker qty {submitted_qty_by_symbol[sym]}"
+        )
+
+    # 2) Prove the test setup actually exercises the clipping path: at
+    #    least one symbol must have broker_qty < planner_qty. Otherwise
+    #    the regression would pass trivially even if we reverted the fix.
+    planner_qty_by_symbol = {a.symbol: a.qty for a in result.actions if a.kind == "open_long"}
+    clipped_symbols = [
+        s
+        for s, planner_qty in planner_qty_by_symbol.items()
+        if s in submitted_qty_by_symbol and submitted_qty_by_symbol[s] < planner_qty
+    ]
+    assert clipped_symbols, (
+        "Test setup invalid: no Kelly clipping observed in this scenario; "
+        "the regression test would pass even if we reverted the fix"
+    )
+
+
 def test_run_rebal_kill_switch_engaged_aborts_submission(
     state: Path,
     broker_factory,

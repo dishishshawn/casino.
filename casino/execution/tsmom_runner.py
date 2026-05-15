@@ -545,10 +545,18 @@ def run_rebal(
                 db_path=db_path,
             )
             result.submitted_order_ids.append(ord_resp.id)
+            # Log/alert the qty risk.submit_order actually sent to the
+            # broker. ``a.qty`` is the planner's intent (target_dollars /
+            # ref); ``ord_resp.qty`` is what survived ¼-Kelly + per-trade
+            # risk + single-name + gross + cash caps inside size_position.
+            # Pre-2026-05-15 both surfaces used a.qty, which made the
+            # Discord notification claim the operator owned 321 shares
+            # when only 120 actually went to Alpaca.
+            actual_qty = ord_resp.qty
             logger.info(
                 "tsmom_runner: bracket-bought {} qty={} ref=${} stop=${}",
                 a.symbol,
-                a.qty,
+                actual_qty,
                 a.reference_price,
                 a.stop_price,
             )
@@ -556,7 +564,7 @@ def run_rebal(
                 run_id=run_id,
                 symbol=a.symbol,
                 side="buy",
-                qty=a.qty,
+                qty=actual_qty,
                 reference_price=a.reference_price,
                 stop_price=a.stop_price,
                 order_id=ord_resp.id,

@@ -2183,19 +2183,45 @@
         ],
         "priority": "medium",
         "subtasks": []
+      },
+      {
+        "id": 48,
+        "title": "Log + alert actual submitted qty, not planner qty",
+        "description": "Discovered 2026-05-15 during the operator-forced --force rebal that started Branch C 15 days early. The tsmom_runner.py:548 'bracket-bought' log line and the alerts.alert_order_submitted call both used a.qty (planner's target_dollars/ref result) rather than ord_resp.qty (the qty risk.size_position actually clipped to and sent to Alpaca). When the planner targets 10% NAV but risk clips via 1/4-Kelly to ~3.7% NAV, the operator sees the planner number in the Discord notification ('BUY 321 DBC') while only the clipped number ('BUY 120 DBC') is live at the broker. Compounding bug: the order-submitted Discord embed printed raw Decimal-from-float prices like '~$31.149999618530273' instead of '~$31.15'.",
+        "details": "casino/execution/tsmom_runner.py: switch the bracket-bought logger.info call and the alerts.alert_order_submitted call to use ord_resp.qty (the BrokerOrder.qty echoed back from broker.submit_bracket_order via risk.submit_order). casino/monitoring/alerts.py: in alert_order_submitted, route reference_price + stop_price through the existing _humanize_money helper for both the embed message and the structured fields. tests/test_tsmom_runner.py: add test_run_rebal_logs_and_alerts_actual_submitted_qty that monkeypatches alerts.alert_order_submitted to capture every call, drives run_rebal with a NAV+price scenario that forces 1/4-Kelly clipping (broker qty < planner qty for at least one symbol), and asserts (a) every captured alert reports broker_qty not planner_qty AND (b) at least one symbol was actually clipped (test would otherwise pass trivially even if the fix were reverted). The shadow runner path is intentionally not changed \u2014 it does not go through size_position so a.qty == ord_resp.qty identically there; the meaningful sizing bug in shadow is filed as task 49.",
+        "testStrategy": "tests/test_tsmom_runner.py::test_run_rebal_logs_and_alerts_actual_submitted_qty passes. tests/test_alerts.py + tests/test_tsmom_runner.py + tests/test_tsmom_shadow_runner.py all pass. Manual: re-fire --force --dry-run and confirm the Discord embed shows '$748.17' rather than '$748.1699829101562'.",
+        "status": "done",
+        "dependencies": [
+          47
+        ],
+        "priority": "medium",
+        "subtasks": []
+      },
+      {
+        "id": 49,
+        "title": "Route shadow runner orders through risk.size_position (Kelly parity)",
+        "description": "Bug discovered 2026-05-15 while fixing task 48: the shadow runner (Belfort) submits orders directly via actual_broker.submit_bracket_order(qty=a.qty), bypassing the risk.size_position 1/4-Kelly + per-trade + single-name + gross + cash caps that the live runner (DiCaprio) goes through via risk.submit_order. Net effect: shadow trades planner-intent quantities (e.g. 321 shares of DBC for a $9999 target at $31.15) while live trades Kelly-clipped quantities (120 shares). The Belfort-vs-DiCaprio comparison that Branch C is supposed to produce is contaminated \u2014 they are trading different sizes on every name on every rebal. Also a CLAUDE.md hard-rule-6 concern: 'Fractional Kelly only (1/4 to 1/2). Full-Kelly sizing is forbidden.' Shadow currently uses full-allocation, not fractional Kelly.",
+        "details": "Two implementation options to consider with the operator before touching code: (A) Refactor size_position so it can be called against a PortfolioState without writing to the live book \u2014 then have shadow call it with a sim-PortfolioState built from the SimBroker. (B) Extract the sizing math into a pure function in casino/execution/risk.py (no book/broker dependencies) and call it from both runners. Option B is cleaner but is a bigger refactor; option A is smaller but couples shadow to a function whose docstring says it's the 'only sanctioned path for production code to send orders'. Either way: ensure shadow does NOT write to the live book (it has its own SimBroker-backed state). Decision deferred to operator \u2014 this is a behavioral change to a mid-experiment paper run.",
+        "testStrategy": "Once a direction is picked: add tests/test_tsmom_shadow_runner.py case asserting that for the same target_weights + portfolio snapshot, both runners produce identical qty (or document the intended divergence). Identity check that shadow + live both reference the same sizing primitive. Verify Branch C dashboard / paper_clock comparison logic still works.",
+        "status": "pending",
+        "dependencies": [
+          48
+        ],
+        "priority": "high",
+        "subtasks": []
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-12T00:10:00.000Z",
-      "taskCount": 38,
-      "completedCount": 35,
+      "lastModified": "2026-05-15T00:15:00.000Z",
+      "taskCount": 49,
+      "completedCount": 41,
       "tags": [
         "master"
       ],
       "created": "2026-05-07T20:48:51.999Z",
       "description": "Tasks for master context",
-      "updated": "2026-05-11T23:55:00.000Z"
+      "updated": "2026-05-15T00:15:00.000Z"
     }
   }
 }
