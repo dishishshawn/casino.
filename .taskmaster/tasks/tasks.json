@@ -2209,19 +2209,32 @@
         ],
         "priority": "high",
         "subtasks": []
+      },
+      {
+        "id": 50,
+        "title": "Close the post-fill book-sync gap that auto-fired the kill switch",
+        "description": "Incident 2026-05-15 17:30 ET: operator --force rebal submitted 7 bracket orders at 23:55 ET on 5/14. Orders accepted by Alpaca at submission, filled at 9:30 ET market open on 5/15, broker holds 7 positions. The book.positions table was NOT populated by any of these events because (a) risk.submit_order only writes to book.orders, not book.positions and (b) there is no automatic broker->book position sync between fill and the 17:30 reconcile. When daily reconcile ran at 17:30 it saw broker=7 positions / book=0 positions, computed drift=$25,673 (25.66% of NAV) which blew past the 1% safety limit, and the auto-kill_criterion engaged the full kill switch (cancel all open orders + flatten + disable). Result: 7 newly entered positions now have SELL MARKETs queued for Monday open and the original bracket-children stops were cancelled. Branch C effectively restarts Monday after Path A liquidation.",
+        "details": "Three implementation options under consideration; pick one before Monday 9:30 ET Mon to avoid a recurrence on whichever path is chosen next. Option A (smallest): add a scheduled task Casino_Daily_TSMOM_BookSync at ~09:45 local that runs casino.execution.reconcile.sync_book_from_broker. Catches fills 15 min after open; lets the 17:30 reconcile see a populated book. Option B: extend reconcile.reconcile so that when the ONLY drift kind is broker_only AND each broker symbol has a matching recently-filled order in book.orders within the last N hours, auto-sync instead of flagging drift. Smarter but couples reconcile to order history. Option C: have risk.submit_order INSERT a pending_fill row into book.positions at submission time keyed by client_order_id, then have a fill-detection job (or reconcile itself) flip status to live on fill. Earliest signal but introduces a new positions table state machine. Cross-cutting question: should the kill switch's flatten step EVER auto-engage without operator approval? CLAUDE.md hard rule 4 says 'kill switch must remain a single command' but does not say 'must not auto-engage on detected drift'. Worth a sanity check that the auto-engagement threshold (1% drift) makes sense given that a brand-new bracket entry yields ~25% drift until the book is synced; either the threshold needs to be aware of the recently-submitted set, OR the gap must be closed so brand-new entries don't look like drift.",
+        "testStrategy": "Unit: test that the chosen mechanism populates book.positions for a freshly-filled-but-unsynced broker position. Integration: simulate the 2026-05-15 sequence (submit bracket orders -> mark fills -> run reconcile) and assert in_sync=True without operator intervention. Regression: run reconcile.reconcile on the 2026-05-15 broker state with a populated book and confirm drift=0.",
+        "status": "pending",
+        "dependencies": [
+          48
+        ],
+        "priority": "high",
+        "subtasks": []
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2026-05-15T00:15:00.000Z",
-      "taskCount": 49,
+      "lastModified": "2026-05-16T00:00:00.000Z",
+      "taskCount": 50,
       "completedCount": 41,
       "tags": [
         "master"
       ],
       "created": "2026-05-07T20:48:51.999Z",
       "description": "Tasks for master context",
-      "updated": "2026-05-15T00:15:00.000Z"
+      "updated": "2026-05-16T00:00:00.000Z"
     }
   }
 }
