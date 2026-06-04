@@ -274,6 +274,67 @@ def alert_order_fill(
     )
 
 
+def alert_external_position_change(
+    *,
+    symbols: list[str],
+    transport: WebhookTransport | None = None,
+) -> AlertResult:
+    """Fired when positions vanish at the broker with no bot sell order.
+
+    The 2026-06-02/03 incident: 7 positions were liquidated overnight by a
+    close that did not originate from the bot (Alpaca-generated order ids, no
+    `kill_event`, the `trading_disabled` flag untouched). The morning book
+    sync silently overwrote the book to match, so nothing alerted. This makes
+    that case loud: a position the bot did not close disappearing is a
+    control breach, not a routine sync.
+    """
+    sym_str = ", ".join(symbols) or "(none)"
+    return fire(
+        title=f"Positions closed OUTSIDE the bot: {sym_str}",
+        message=(
+            f"{len(symbols)} position(s) present in the book are gone at the "
+            "broker with no matching bot sell order. Something flattened them "
+            "outside the system (manual close, dashboard, or broker action). "
+            "Investigate the broker activity log before the next rebal."
+        ),
+        severity="critical",
+        fields={
+            "Symbols": sym_str,
+            "Count": str(len(symbols)),
+        },
+        transport=transport,
+    )
+
+
+def alert_stop_rearmed(
+    *,
+    armed: list[str],
+    transport: WebhookTransport | None = None,
+) -> AlertResult:
+    """Fired when the EOD guard finds an unprotected position and re-arms it.
+
+    Every held position must carry a live broker-side stop (CLAUDE.md hard
+    rule 3). A position showing up here means its stop was missing — usually
+    because the bracket entry's DAY-tif stop leg expired — and the guard had
+    to submit a fresh GTC stop. Healthy days arm nothing.
+    """
+    sym_str = ", ".join(armed) or "(none)"
+    return fire(
+        title=f"Re-armed missing stop(s): {sym_str}",
+        message=(
+            f"{len(armed)} held position(s) had no live broker stop and were "
+            "re-armed with a GTC stop. If this recurs every day, the bracket "
+            "entry's stop leg is expiring (DAY tif) and needs a durable fix."
+        ),
+        severity="warning",
+        fields={
+            "Symbols": sym_str,
+            "Count": str(len(armed)),
+        },
+        transport=transport,
+    )
+
+
 def alert_drawdown_breach(
     *,
     drawdown_pct: float,

@@ -17,6 +17,7 @@ Cron: once daily after the close (RUNBOOK).
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -25,7 +26,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from casino.execution import book, reconcile
+from casino.execution import book, paper_clock, reconcile
 from casino.execution.alpaca_broker import AlpacaBroker, build_default_broker
 from casino.monitoring import alerts
 from casino.signals import regime
@@ -47,6 +48,8 @@ class JobResult:
     drawdown: Decimal
     high_water_mark: Decimal
     risk_on: bool
+    fills_recorded: int = 0
+    stops_rearmed: int = 0
 
 
 # ---------------------------------------------------------------------------- helpers
@@ -77,6 +80,24 @@ def compute_drawdown(
     return dd, hwm
 
 
+def _resolve_stop_fraction(*, db_path: Path | None) -> Decimal:
+    """Read the run's configured stop_fraction from the paper clock.
+
+    Falls back to ``reconcile.DEFAULT_STOP_FRACTION`` when the clock or the
+    key is absent so the guard always has a sane distance to arm at.
+    """
+    row = paper_clock.fetch_paper_clock(db_path=db_path)
+    if row is not None and row.config_json:
+        try:
+            cfg = json.loads(row.config_json)
+            raw = cfg.get("stop_fraction")
+            if raw is not None:
+                return Decimal(str(raw))
+        except (ValueError, TypeError, ArithmeticError):
+            logger.warning("reconcile_eod: unparseable stop_fraction in paper_clock config")
+    return reconcile.DEFAULT_STOP_FRACTION
+
+
 def run_reconcile_eod(
     *,
     broker: AlpacaBroker | None = None,
@@ -95,6 +116,18 @@ def run_reconcile_eod(
     if broker is None:
         broker = build_default_broker()
     try:
+        # 0) advance the book from the broker's order history so orders/fills
+        #    reflect reality before we reconcile positions. Non-fatal: a sync
+        #    hiccup must not block the P&L write.
+        fills_recorded = 0
+        try:
+            fills_recorded = reconcile.record_fills_from_broker(broker=broker, db_path=db_path)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("reconcile_eod: fill recording failed (continuing)")
+            alerts.alert_unhandled_exception(
+                job="reconcile_eod.record_fills", exc_type=type(e).__name__, detail=str(e)
+            )
+
         # 1) reconcile
         recon = reconcile.reconcile(broker=broker, db_path=db_path)
         critical = reconcile.critical_drift(recon)
@@ -107,6 +140,27 @@ def run_reconcile_eod(
         # 2) account snapshot
         account = broker.get_account()
         positions = broker.get_positions()
+
+        # 2b) re-arm broker-side stops on any unprotected position (hard rule
+        #     3). The bracket entry's stop leg expires intraday (DAY tif); by
+        #     EOD the guard re-arms a durable GTC stop so protection survives
+        #     to the next session. Non-fatal but alerts critically on failure.
+        stops_rearmed = 0
+        try:
+            stop_results = reconcile.ensure_protective_stops(
+                broker=broker,
+                stop_fraction=_resolve_stop_fraction(db_path=db_path),
+                db_path=db_path,
+            )
+            armed = [r.symbol for r in stop_results if r.armed]
+            stops_rearmed = len(armed)
+            if armed:
+                alerts.alert_stop_rearmed(armed=armed)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("reconcile_eod: stop re-arm failed")
+            alerts.alert_unhandled_exception(
+                job="reconcile_eod.ensure_stops", exc_type=type(e).__name__, detail=str(e)
+            )
 
         # 3) regime evaluation (informational; no orders)
         risk_on = regime.is_risk_on(as_of=as_of, db_path=duckdb_path)
@@ -164,6 +218,8 @@ def run_reconcile_eod(
             drawdown=drawdown,
             high_water_mark=hwm,
             risk_on=risk_on,
+            fills_recorded=fills_recorded,
+            stops_rearmed=stops_rearmed,
         )
     except Exception as e:  # noqa: BLE001
         alerts.alert_unhandled_exception(

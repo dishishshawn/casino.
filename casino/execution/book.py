@@ -317,6 +317,42 @@ def insert_fill(
         return int(cur.lastrowid or 0)
 
 
+def has_fill(broker_order_id: str, *, db_path: Path | None = None) -> bool:
+    """Return True iff a fill row already exists for this broker order id.
+
+    Used by ``reconcile.record_fills_from_broker`` to stay idempotent — the
+    EOD sweep can re-poll the same filled order on consecutive days without
+    double-recording it.
+    """
+    init_schema(db_path)
+    with get_book_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM fills WHERE broker_order_id = ? LIMIT 1",
+            (broker_order_id,),
+        ).fetchone()
+    return row is not None
+
+
+def has_recent_sell_order(
+    symbol: str,
+    *,
+    db_path: Path | None = None,
+) -> bool:
+    """Return True iff the book has a sell order on record for ``symbol``.
+
+    A bot-initiated close (monthly rebal, kill switch) inserts a sell order
+    row. ``sync_book_from_broker`` uses this to tell an explained close apart
+    from a position that vanished at the broker outside the bot's control.
+    """
+    init_schema(db_path)
+    with get_book_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM orders WHERE symbol = ? AND side = 'sell' LIMIT 1",
+            (symbol.upper(),),
+        ).fetchone()
+    return row is not None
+
+
 # ---------------------------------------------------------------------------- positions
 
 

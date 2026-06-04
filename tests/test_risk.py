@@ -20,6 +20,7 @@ from casino.execution.alpaca_broker import (
     BrokerAccount,
     BrokerOrder,
     BrokerPosition,
+    _convert_order,
 )
 from casino.execution.risk import (
     PortfolioState,
@@ -44,10 +45,13 @@ class FakeTradingClient:
         account: BrokerAccount,
         positions: list[BrokerPosition] | None = None,
         next_order_id: str = "ord-1",
+        order_history: list[BrokerOrder] | None = None,
     ) -> None:
         self._account = account
         self._positions = list(positions or [])
         self._open_orders: list[BrokerOrder] = []
+        # Terminal / historical orders returned for get_orders(status="all").
+        self.order_history: list[BrokerOrder] = list(order_history or [])
         self._next_id = next_order_id
         self.submitted_requests: list[Any] = []
         self.cancelled = 0
@@ -56,23 +60,30 @@ class FakeTradingClient:
     # the broker wrapper calls these
     def submit_order(self, order_data: Any) -> Any:
         self.submitted_requests.append(order_data)
-        # produce a minimal duck-typed object the wrapper can convert
-        return _FakeRawOrder(
+        # A StopOrderRequest carries a top-level stop_price (bracket entries
+        # carry a nested stop_loss instead); register stops as open so a
+        # second ensure_protective_stops pass sees the symbol as protected.
+        stop_px = getattr(order_data, "stop_price", None)
+        side = "buy" if str(getattr(order_data, "side", "")).lower().endswith("buy") else "sell"
+        raw = _FakeRawOrder(
             id=self._next_id,
             client_order_id=getattr(order_data, "client_order_id", None) or "",
             symbol=getattr(order_data, "symbol", "TEST"),
-            side="buy" if str(getattr(order_data, "side", "")).lower().endswith("buy") else "sell",
+            side=side,
             qty=str(getattr(order_data, "qty", 0)),
             filled_qty="0",
             status="accepted",
-            order_type="market",
-            stop_price=None,
+            order_type="stop" if stop_px is not None else "market",
+            stop_price=str(stop_px) if stop_px is not None else None,
             limit_price=None,
             filled_avg_price=None,
             submitted_at=None,
             filled_at=None,
             legs=(),
         )
+        if stop_px is not None:
+            self._open_orders.append(_convert_order(raw))
+        return raw
 
     def cancel_orders(self) -> list[Any]:
         n = len(self._open_orders)
@@ -85,6 +96,13 @@ class FakeTradingClient:
         self._open_orders = [o for o in self._open_orders if o.id != order_id]
 
     def get_orders(self, filter: Any | None = None) -> list[Any]:
+        status = ""
+        if filter is not None:
+            raw_status = getattr(filter, "status", "")
+            status = str(getattr(raw_status, "value", raw_status)).lower()
+        if status in ("all", "closed"):
+            # History (terminal orders) plus anything still open.
+            return list(self.order_history) + list(self._open_orders)
         return list(self._open_orders)
 
     def get_all_positions(self) -> list[Any]:

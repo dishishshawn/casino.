@@ -381,6 +381,67 @@ class AlpacaBroker:
         )
         return order
 
+    def submit_stop_order(
+        self,
+        *,
+        symbol: str,
+        qty: int,
+        side: OrderSide,
+        stop_price: Decimal,
+        time_in_force: str = "gtc",
+        client_order_id: str | None = None,
+    ) -> BrokerOrder:
+        """Submit a standalone broker-side stop order (GTC by default).
+
+        CLAUDE.md hard rule 3: every position must have a *persistent*
+        broker-side stop. ``submit_bracket_order`` attaches a stop leg, but
+        because the entry is a market order Alpaca forces ``day`` time-in-
+        force on the whole order, so the bracket's stop leg expires at the
+        first session close (observed 2026-06-01: all 7 stop legs expired the
+        day the entries filled, leaving positions unprotected). This method
+        (re-)arms a free-standing GTC stop so protection survives across days;
+        ``reconcile.ensure_protective_stops`` calls it for any open position
+        that has no live stop at the broker.
+        """
+        if qty <= 0:
+            raise ValueError(f"qty must be positive, got {qty}")
+        if stop_price <= Decimal("0"):
+            raise ValueError(f"stop_price must be positive, got {stop_price}")
+
+        from alpaca.trading.enums import (
+            OrderSide as SDKOrderSide,
+        )
+        from alpaca.trading.enums import TimeInForce  # noqa: PLC0415
+        from alpaca.trading.requests import StopOrderRequest  # noqa: PLC0415
+
+        sdk_side = SDKOrderSide.BUY if side == "buy" else SDKOrderSide.SELL
+        try:
+            tif = TimeInForce(time_in_force.lower())
+        except ValueError as e:
+            raise ValueError(f"unknown time_in_force {time_in_force!r}") from e
+
+        req = StopOrderRequest(
+            symbol=symbol.upper(),
+            qty=qty,
+            side=sdk_side,
+            time_in_force=tif,
+            stop_price=str(stop_price),
+            client_order_id=client_order_id,
+        )
+        client = self._ensure_client()
+        raw = client.submit_order(order_data=req)
+        order = _convert_order(raw)
+        logger.info(
+            "alpaca: armed {} stop {} {} @ {} tif={} (id={})",
+            side,
+            qty,
+            symbol,
+            stop_price,
+            time_in_force,
+            order.id,
+        )
+        return order
+
     def cancel_all(self) -> int:
         """Cancel every open order. Returns the count cancelled (best-effort)."""
         client = self._ensure_client()

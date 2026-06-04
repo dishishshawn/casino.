@@ -442,6 +442,26 @@ def flatten_and_disable(
     try:
         closed_orders = broker.close_all_positions(cancel_orders=True)
         closed = len(closed_orders)
+        # Record the closes so the book carries proof the bot flattened these
+        # names (keeps the audit trail complete and the external-close
+        # detector from later mislabeling a kill as an outside action).
+        for o in closed_orders:
+            try:
+                book.insert_order(
+                    broker_order_id=o.id,
+                    client_order_id=o.client_order_id or None,
+                    symbol=o.symbol,
+                    side=o.side,
+                    qty=o.qty,
+                    stop_price=Decimal("0"),
+                    limit_price=None,
+                    submitted_at_utc=o.submitted_at,
+                    status=o.status,
+                    notional_estimate=None,
+                    db_path=db_path,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.error("kill_switch: could not record close order {}: {}", o.id, e)
     except Exception as e:  # noqa: BLE001
         logger.error("kill_switch: close_all_positions failed: {}", e)
 

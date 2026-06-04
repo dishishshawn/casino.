@@ -525,6 +525,23 @@ def run_rebal(
         if a.kind == "close":
             try:
                 ord_resp = actual_broker.close_position(a.symbol)
+                # Record the sell BEFORE deleting the position so the book
+                # carries proof the bot closed this name. Without it, the
+                # next book-sync's external-close detector would flag this
+                # legitimate rebal close as an outside-the-bot liquidation.
+                book.insert_order(
+                    broker_order_id=ord_resp.id,
+                    client_order_id=ord_resp.client_order_id or None,
+                    symbol=a.symbol,
+                    side="sell",
+                    qty=ord_resp.qty,
+                    stop_price=Decimal("0"),
+                    limit_price=None,
+                    submitted_at_utc=ord_resp.submitted_at,
+                    status=ord_resp.status,
+                    notional_estimate=None,
+                    db_path=db_path,
+                )
                 book.delete_position(a.symbol, db_path=db_path)
                 result.submitted_order_ids.append(ord_resp.id)
                 logger.info("tsmom_runner: closed {} (broker order {})", a.symbol, ord_resp.id)
