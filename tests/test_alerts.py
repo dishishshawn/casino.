@@ -225,3 +225,23 @@ def test_alert_handles_transport_exception() -> None:
     )
     assert result.sent is False
     assert "transport error" in result.reason
+
+
+def test_alert_below_stop_unprotected_is_critical() -> None:
+    captured, tx = _capture()
+    result = alerts.alert_below_stop_unprotected(symbols=["USO"], transport=tx)
+    assert result.sent is True
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0xE74C3C  # critical / red
+    assert "USO" in embed["description"] or "USO" in str(embed["fields"])
+
+
+def test_alert_positions_liquidated_is_critical() -> None:
+    captured, tx = _capture()
+    result = alerts.alert_positions_liquidated(
+        details={"USO": "sold at ~120.95, stop was 121.56"}, transport=tx
+    )
+    assert result.sent is True
+    embed = captured[0][1]["embeds"][0]
+    assert embed["color"] == 0xE74C3C
+    assert "USO" in str(embed["fields"])

@@ -335,6 +335,56 @@ def alert_stop_rearmed(
     )
 
 
+def alert_below_stop_unprotected(
+    *,
+    symbols: list[str],
+    transport: WebhookTransport | None = None,
+) -> AlertResult:
+    """EOD: positions that fell past their stop and can't be re-armed.
+
+    The market is closed at EOD, so we don't sell here — we warn the operator
+    that these positions are unprotected and will be sold at the next open. A
+    sell-stop can't be placed at or above the current price, so once a position
+    has dropped through its stop level the only protective action is to exit.
+    """
+    sym_str = ", ".join(symbols) or "(none)"
+    return fire(
+        title=f"Below protective stop — unprotected: {sym_str}",
+        message=(
+            f"{len(symbols)} position(s) have fallen past their protective stop "
+            "and could not be re-armed (a stop can't sit above the current "
+            "price). They are unprotected and will be sold at market on the next "
+            "open. Review before then if you disagree."
+        ),
+        severity="critical",
+        fields={"Symbols": sym_str, "Count": str(len(symbols))},
+        transport=transport,
+    )
+
+
+def alert_positions_liquidated(
+    *,
+    details: dict[str, str],
+    transport: WebhookTransport | None = None,
+) -> AlertResult:
+    """Morning: positions sold at market because they were below their stop.
+
+    ``details`` maps each symbol to a short human description (price sold at
+    and where the stop was), shown as embed fields.
+    """
+    sym_str = ", ".join(details) or "(none)"
+    return fire(
+        title=f"Sold at market — were below stop: {sym_str}",
+        message=(
+            f"{len(details)} position(s) were below their protective stop and "
+            "have been sold at market to honor the risk limit."
+        ),
+        severity="critical",
+        fields=details or {"Positions": "(none)"},
+        transport=transport,
+    )
+
+
 def alert_drawdown_breach(
     *,
     drawdown_pct: float,
