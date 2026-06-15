@@ -34,6 +34,22 @@ def main() -> int:
             alerts.alert_external_position_change(symbols=external)
         n = reconcile.sync_book_from_broker(broker=broker)
         logger.info("sync_book: wrote {} broker positions into book.positions", n)
+
+        # Market is open now (this runs ~09:45 CT). Enforce protection: arm
+        # stops on anything naked, and sell anything already past its stop.
+        stop_results = reconcile.ensure_protective_stops(broker=broker, liquidate_breached=True)
+        liquidated = {
+            r.symbol: (
+                f"sold at ~{r.market_price}, stop was {r.stop_price}"
+                if r.market_price is not None
+                else f"sold; stop was {r.stop_price}"
+            )
+            for r in stop_results
+            if r.liquidated
+        }
+        if liquidated:
+            logger.warning("sync_book: liquidated below-stop positions: {}", list(liquidated))
+            alerts.alert_positions_liquidated(details=liquidated)
         return 0
     except Exception as e:  # noqa: BLE001
         alerts.alert_unhandled_exception(

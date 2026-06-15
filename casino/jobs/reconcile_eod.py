@@ -151,11 +151,15 @@ def run_reconcile_eod(
                 broker=broker,
                 stop_fraction=_resolve_stop_fraction(db_path=db_path),
                 db_path=db_path,
+                liquidate_breached=False,  # market is closed at EOD
             )
             armed = [r.symbol for r in stop_results if r.armed]
             stops_rearmed = len(armed)
             if armed:
                 alerts.alert_stop_rearmed(armed=armed)
+            breached = [r.symbol for r in stop_results if r.breached]
+            if breached:
+                alerts.alert_below_stop_unprotected(symbols=breached)
         except Exception as e:  # noqa: BLE001
             logger.exception("reconcile_eod: stop re-arm failed")
             alerts.alert_unhandled_exception(

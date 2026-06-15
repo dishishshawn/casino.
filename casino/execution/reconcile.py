@@ -419,13 +419,18 @@ def ensure_protective_stops(
                 try:
                     close = broker.close_position(sym)
                     breach_order_id = close.id
+                    # Record the close as a sell order so the next sync's
+                    # external-close detector recognises it as bot-initiated.
+                    # It's a market order (no live stop); we store the breached
+                    # stop level as context since the orders table requires a
+                    # non-null stop_price.
                     book.insert_order(
                         broker_order_id=close.id,
                         client_order_id=close.client_order_id or None,
                         symbol=sym,
                         side="sell",
                         qty=p.qty,
-                        stop_price=None,
+                        stop_price=stop_px,
                         limit_price=None,
                         submitted_at_utc=close.submitted_at,
                         status=close.status,
@@ -442,9 +447,7 @@ def ensure_protective_stops(
                         close.id,
                     )
                 except Exception:  # noqa: BLE001 — one symbol must not abort the rest
-                    logger.exception(
-                        "ensure_protective_stops: liquidation of {} failed", sym
-                    )
+                    logger.exception("ensure_protective_stops: liquidation of {} failed", sym)
             else:
                 logger.warning(
                     "ensure_protective_stops: {} BREACHED — stop {} >= market {} "
