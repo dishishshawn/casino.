@@ -339,6 +339,17 @@ class StopArmResult:
     already_protected: bool
     armed: bool
     order_id: str | None
+    breached: bool = False
+    liquidated: bool = False
+    market_price: Decimal | None = None
+
+
+# A protective sell-stop is only valid when its price is below the current
+# market price. A position that has fallen to/below its stop level is
+# "breached" — it cannot be re-armed and must be exited instead. The cushion
+# keeps ordinary quote jitter (a cent or two) from counting as a material
+# breach worth auto-selling.
+STOP_BREACH_CUSHION = Decimal("0.0025")  # 0.25%
 
 
 def ensure_protective_stops(
@@ -347,6 +358,7 @@ def ensure_protective_stops(
     stop_fraction: Decimal = DEFAULT_STOP_FRACTION,
     db_path: Path | None = None,
     dry_run: bool = False,
+    liquidate_breached: bool = False,
 ) -> list[StopArmResult]:
     """Guarantee every open long has a live broker-side stop (hard rule 3).
 
@@ -390,9 +402,73 @@ def ensure_protective_stops(
                     already_protected=True,
                     armed=False,
                     order_id=None,
+                    market_price=p.market_price,
                 )
             )
             continue
+        # Breached: the position has already fallen to/below its stop level, so
+        # a normal sell-stop would be rejected (stop >= market). At EOD the
+        # market is closed and we only flag it; at the next open the caller
+        # passes liquidate_breached=True and we exit it at market. The cushion
+        # keeps quote jitter from triggering a sale.
+        if stop_px >= p.market_price:
+            material = p.market_price <= stop_px * (Decimal("1") - STOP_BREACH_CUSHION)
+            liquidated = False
+            breach_order_id: str | None = None
+            if liquidate_breached and material and not dry_run and broker.is_market_open():
+                try:
+                    close = broker.close_position(sym)
+                    breach_order_id = close.id
+                    book.insert_order(
+                        broker_order_id=close.id,
+                        client_order_id=close.client_order_id or None,
+                        symbol=sym,
+                        side="sell",
+                        qty=p.qty,
+                        stop_price=None,
+                        limit_price=None,
+                        submitted_at_utc=close.submitted_at,
+                        status=close.status,
+                        notional_estimate=None,
+                        db_path=db_path,
+                    )
+                    liquidated = True
+                    logger.warning(
+                        "ensure_protective_stops: LIQUIDATED {} at market — was "
+                        "below stop {} (market {}), order {}",
+                        sym,
+                        stop_px,
+                        p.market_price,
+                        close.id,
+                    )
+                except Exception:  # noqa: BLE001 — one symbol must not abort the rest
+                    logger.exception(
+                        "ensure_protective_stops: liquidation of {} failed", sym
+                    )
+            else:
+                logger.warning(
+                    "ensure_protective_stops: {} BREACHED — stop {} >= market {} "
+                    "(unprotected; material={})",
+                    sym,
+                    stop_px,
+                    p.market_price,
+                    material,
+                )
+            results.append(
+                StopArmResult(
+                    symbol=sym,
+                    qty=p.qty,
+                    stop_price=stop_px,
+                    already_protected=False,
+                    armed=False,
+                    order_id=breach_order_id,
+                    breached=True,
+                    liquidated=liquidated,
+                    market_price=p.market_price,
+                )
+            )
+            continue
+
         if dry_run:
             logger.warning(
                 "ensure_protective_stops: {} UNPROTECTED (would arm GTC stop @ {})",
@@ -407,45 +483,62 @@ def ensure_protective_stops(
                     already_protected=False,
                     armed=False,
                     order_id=None,
+                    market_price=p.market_price,
                 )
             )
             continue
-        order = broker.submit_stop_order(
-            symbol=sym,
-            qty=p.qty,
-            side="sell",
-            stop_price=stop_px,
-            time_in_force="gtc",
-        )
-        book.insert_order(
-            broker_order_id=order.id,
-            client_order_id=order.client_order_id or None,
-            symbol=sym,
-            side="sell",
-            qty=p.qty,
-            stop_price=stop_px,
-            limit_price=None,
-            submitted_at_utc=order.submitted_at,
-            status=order.status,
-            notional_estimate=None,
-            db_path=db_path,
-        )
-        logger.warning(
-            "ensure_protective_stops: re-armed {} with GTC stop @ {} (order {})",
-            sym,
-            stop_px,
-            order.id,
-        )
-        results.append(
-            StopArmResult(
+
+        try:
+            order = broker.submit_stop_order(
                 symbol=sym,
                 qty=p.qty,
+                side="sell",
                 stop_price=stop_px,
-                already_protected=False,
-                armed=True,
-                order_id=order.id,
+                time_in_force="gtc",
             )
-        )
+            book.insert_order(
+                broker_order_id=order.id,
+                client_order_id=order.client_order_id or None,
+                symbol=sym,
+                side="sell",
+                qty=p.qty,
+                stop_price=stop_px,
+                limit_price=None,
+                submitted_at_utc=order.submitted_at,
+                status=order.status,
+                notional_estimate=None,
+                db_path=db_path,
+            )
+            logger.warning(
+                "ensure_protective_stops: re-armed {} with GTC stop @ {} (order {})",
+                sym,
+                stop_px,
+                order.id,
+            )
+            results.append(
+                StopArmResult(
+                    symbol=sym,
+                    qty=p.qty,
+                    stop_price=stop_px,
+                    already_protected=False,
+                    armed=True,
+                    order_id=order.id,
+                    market_price=p.market_price,
+                )
+            )
+        except Exception:  # noqa: BLE001 — one symbol must not abort the rest
+            logger.exception("ensure_protective_stops: failed to arm {}", sym)
+            results.append(
+                StopArmResult(
+                    symbol=sym,
+                    qty=p.qty,
+                    stop_price=stop_px,
+                    already_protected=False,
+                    armed=False,
+                    order_id=None,
+                    market_price=p.market_price,
+                )
+            )
     return results
 
 
