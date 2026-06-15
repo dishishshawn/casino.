@@ -46,6 +46,8 @@ class FakeTradingClient:
         positions: list[BrokerPosition] | None = None,
         next_order_id: str = "ord-1",
         order_history: list[BrokerOrder] | None = None,
+        market_open: bool = True,
+        fail_symbols: set[str] | None = None,
     ) -> None:
         self._account = account
         self._positions = list(positions or [])
@@ -56,9 +58,14 @@ class FakeTradingClient:
         self.submitted_requests: list[Any] = []
         self.cancelled = 0
         self.closed_positions: list[str] = []
+        self._market_open = market_open
+        self._fail_symbols = {s.upper() for s in (fail_symbols or set())}
 
     # the broker wrapper calls these
     def submit_order(self, order_data: Any) -> Any:
+        sym = str(getattr(order_data, "symbol", "TEST")).upper()
+        if sym in self._fail_symbols:
+            raise RuntimeError(f"simulated broker reject for {sym}")
         self.submitted_requests.append(order_data)
         # A StopOrderRequest carries a top-level stop_price (bracket entries
         # carry a nested stop_loss instead); register stops as open so a
@@ -156,10 +163,14 @@ class FakeTradingClient:
         return _account_to_raw(self._account)
 
     def get_clock(self) -> Any:
-        class _C:
-            is_open = True
+        is_open = self._market_open
 
-        return _C()
+        class _C:
+            pass
+
+        c = _C()
+        c.is_open = is_open
+        return c
 
 
 class _FakeRawOrder:
@@ -436,6 +447,38 @@ def test_submit_order_uses_bracket_with_broker_stop(isolated_state, broker_facto
     assert req.stop_loss is not None
     # And the leg's stop_price echoes what we requested.
     assert Decimal(str(req.stop_loss.stop_price)) == Decimal("99")
+
+
+def test_submit_order_entry_is_gtc_limit_bracket(isolated_state, broker_factory) -> None:
+    """Regression for the 2026-06-01 naked-stop incident.
+
+    A *market* bracket forces ``day`` time-in-force, so Alpaca expires the
+    stop leg at the first session close and the position is left naked. The
+    durable fix enters with a marketable-limit GTC order so the attached stop
+    leg persists across sessions. Assert the request we send is GTC + limit
+    with the buffer applied in the marketable direction.
+    """
+    broker, fake = broker_factory()
+    submit_order(
+        broker=broker,
+        symbol="AAA",
+        side="buy",
+        entry_price=Decimal("100"),
+        stop_price=Decimal("99"),
+        entry_limit_buffer=Decimal("0.01"),
+        db_path=isolated_state,
+    )
+    req = fake.submitted_requests[0]
+    assert str(getattr(req.time_in_force, "value", req.time_in_force)) == "gtc"
+    assert str(getattr(req.type, "value", req.type)) == "limit"
+    # buy, 100 entry, 1% buffer, rounded up in the marketable direction → 101.00.
+    assert Decimal(str(req.limit_price)) == Decimal("101.00")
+    # The marketable-limit price is persisted to the book for reconciliation.
+    with book.get_book_conn(isolated_state) as conn:
+        (limit_px,) = conn.execute(
+            "SELECT limit_price FROM orders WHERE status != 'broker_rejected'"
+        ).fetchone()
+    assert Decimal(str(limit_px)) == Decimal("101.00")
 
 
 def test_submit_order_records_to_book(isolated_state, broker_factory) -> None:
