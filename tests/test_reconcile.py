@@ -307,6 +307,14 @@ def test_ensure_stops_isolates_one_failure(isolated_state: Path) -> None:
 
 def test_ensure_stops_liquidates_material_breach_when_open(isolated_state: Path) -> None:
     # entry 100 -> stop 90; market 80 is well past the cushion, market open.
+    # Seed the book so we can prove the phantom position is removed on sale.
+    book.upsert_position(
+        symbol="USO",
+        side="long",
+        qty=10,
+        avg_entry_price=Decimal("100"),
+        db_path=isolated_state,
+    )
     broker = _broker_with([_long("USO", "100", "80")])  # FakeTradingClient market_open=True
     results = reconcile.ensure_protective_stops(
         broker=broker, db_path=isolated_state, liquidate_breached=True
@@ -315,6 +323,9 @@ def test_ensure_stops_liquidates_material_breach_when_open(isolated_state: Path)
     assert r.breached is True
     assert r.liquidated is True
     assert "USO" in broker._client.closed_positions  # type: ignore[attr-defined]
+    # the sold position must be gone from the book (else it reads as book-only
+    # drift at the next reconcile and trips the kill switch)
+    assert all(p.symbol != "USO" for p in book.fetch_positions(db_path=isolated_state))
 
 
 def test_ensure_stops_no_liquidation_when_market_closed(isolated_state: Path) -> None:

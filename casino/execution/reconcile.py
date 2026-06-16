@@ -437,6 +437,11 @@ def ensure_protective_stops(
                         notional_estimate=None,
                         db_path=db_path,
                     )
+                    # Remove the position from the book immediately: it's gone
+                    # at the broker now, so leaving it on the book would read as
+                    # a book-only drift at the next reconcile and trip the kill
+                    # switch (observed 2026-06-16: phantom USO halted trading).
+                    book.delete_position(sym, db_path=db_path)
                     liquidated = True
                     logger.warning(
                         "ensure_protective_stops: LIQUIDATED {} at market — was "
