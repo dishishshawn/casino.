@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from pathlib import Path
 from typing import Literal
 
@@ -35,6 +35,18 @@ from casino.execution.alpaca_broker import (
 )
 
 OrderSide = Literal["buy", "sell"]
+
+
+# Marketable-limit buffer for entries (hard rule 3 / durable broker-side stop).
+# Alpaca forces ``day`` time-in-force on a *market* bracket, so its stop leg
+# expires at the first session close and leaves the position naked (the
+# 2026-06-01 incident: all 7 stop legs expired the day the entries filled).
+# A *limit* bracket may be GTC, so we enter with a marketable limit — a small
+# buffer through the reference price — and the attached stop leg inherits GTC
+# and persists across sessions. No daily re-arm, no naked window. The buffer
+# caps entry slippage; if price runs past it intraday the entry simply does
+# not fill that session (a tracking miss, never an unprotected position).
+DEFAULT_ENTRY_LIMIT_BUFFER: Decimal = Decimal("0.01")
 
 
 # ---------------------------------------------------------------------------- errors
@@ -289,6 +301,7 @@ def submit_order(
     stop_price: Decimal,
     portfolio: PortfolioState | None = None,
     take_profit_price: Decimal | None = None,
+    entry_limit_buffer: Decimal = DEFAULT_ENTRY_LIMIT_BUFFER,
     client_order_id: str | None = None,
     db_path: Path | None = None,
 ) -> BrokerOrder:
@@ -301,6 +314,15 @@ def submit_order(
     * Sizing + caps: via `size_position`.
     * Broker-side stop: via `AlpacaBroker.submit_bracket_order`, which
       always sends a stop leg (CLAUDE.md hard rule 3).
+
+    The entry goes out as a **marketable-limit GTC** order: the limit is the
+    reference price nudged ``entry_limit_buffer`` through the touch (up for a
+    buy, down for a sell). A market entry would force ``day`` time-in-force on
+    the whole bracket, expiring the stop leg at the first session close (the
+    2026-06-01 naked-position incident); a limit entry may be GTC, so the
+    attached stop persists across sessions with no daily re-arm. The buffer
+    bounds slippage; on a violent intraday move past it the entry does not
+    fill that session — a tracking miss, never an unprotected position.
 
     Returns the `BrokerOrder` from the broker; on error, raises
     `TradingDisabledError` or `RiskRejection`.
@@ -320,6 +342,19 @@ def submit_order(
     )
     coid = client_order_id or f"casino-{uuid.uuid4().hex[:16]}"
 
+    # Marketable-limit price: nudge the reference through the touch so the
+    # order fills like a market order but is GTC-eligible (see docstring).
+    # Round in the marketable direction (up for a buy, down for a sell) so the
+    # rounding never makes the limit *less* likely to fill.
+    if sized.side == "buy":
+        limit_price = (sized.entry_price * (Decimal("1") + entry_limit_buffer)).quantize(
+            Decimal("0.01"), rounding=ROUND_UP
+        )
+    else:
+        limit_price = (sized.entry_price * (Decimal("1") - entry_limit_buffer)).quantize(
+            Decimal("0.01"), rounding=ROUND_DOWN
+        )
+
     # Write a "submission_pending" book row BEFORE calling the broker so a
     # process kill / network hiccup between broker call and final book write
     # can never leave the broker holding a position the book has no record
@@ -336,7 +371,7 @@ def submit_order(
         side=sized.side,
         qty=sized.qty,
         stop_price=sized.stop_price,
-        limit_price=None,
+        limit_price=limit_price,
         submitted_at_utc=None,
         status="submission_pending",
         notional_estimate=sized.notional,
@@ -349,7 +384,9 @@ def submit_order(
             qty=sized.qty,
             side=sized.side,
             stop_price=sized.stop_price,
+            limit_price=limit_price,
             take_profit_price=take_profit_price,
+            time_in_force="gtc",
             client_order_id=coid,
         )
     except Exception:

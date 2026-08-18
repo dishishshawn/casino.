@@ -314,6 +314,7 @@ class AlpacaBroker:
         qty: int,
         side: OrderSide,
         stop_price: Decimal,
+        limit_price: Decimal | None = None,
         take_profit_price: Decimal | None = None,
         time_in_force: str = "day",
         client_order_id: str | None = None,
@@ -324,13 +325,19 @@ class AlpacaBroker:
         broker-side stop. This method enforces that — `stop_price` is
         required, and the resulting order has a `stop_loss` leg.
 
-        For now we submit market orders for the entry (the v1 strategy
-        is daily/EOD; intraday limit logic lives in a later phase).
+        When ``limit_price`` is given the entry is a **limit** order, which
+        is the production path: a limit bracket may carry ``gtc``
+        time-in-force, so the stop leg persists across sessions. A *market*
+        entry forces ``day`` tif on the whole bracket, expiring the stop leg
+        at the first session close (the 2026-06-01 naked-position incident).
+        ``limit_price`` omitted falls back to a market entry (legacy/tests).
         """
         if qty <= 0:
             raise ValueError(f"qty must be positive, got {qty}")
         if stop_price <= Decimal("0"):
             raise ValueError(f"stop_price must be positive, got {stop_price}")
+        if limit_price is not None and limit_price <= Decimal("0"):
+            raise ValueError(f"limit_price must be positive, got {limit_price}")
 
         from alpaca.trading.enums import (  # noqa: PLC0415
             OrderClass,
@@ -340,6 +347,7 @@ class AlpacaBroker:
             OrderSide as SDKOrderSide,
         )
         from alpaca.trading.requests import (  # noqa: PLC0415
+            LimitOrderRequest,
             MarketOrderRequest,
             StopLossRequest,
             TakeProfitRequest,
@@ -358,25 +366,33 @@ class AlpacaBroker:
             else None
         )
         order_class = OrderClass.BRACKET if take_profit is not None else OrderClass.OTO
-        req = MarketOrderRequest(
-            symbol=symbol.upper(),
-            qty=qty,
-            side=sdk_side,
-            time_in_force=tif,
-            order_class=order_class,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            client_order_id=client_order_id,
+        common = {
+            "symbol": symbol.upper(),
+            "qty": qty,
+            "side": sdk_side,
+            "time_in_force": tif,
+            "order_class": order_class,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "client_order_id": client_order_id,
+        }
+        req: LimitOrderRequest | MarketOrderRequest = (
+            LimitOrderRequest(limit_price=str(limit_price), **common)
+            if limit_price is not None
+            else MarketOrderRequest(**common)
         )
         client = self._ensure_client()
         raw = client.submit_order(order_data=req)
         order = _convert_order(raw)
+        entry_desc = f"limit {limit_price}" if limit_price is not None else "market"
         logger.info(
-            "alpaca: submitted {} {} {} @ market with stop {} (id={})",
+            "alpaca: submitted {} {} {} @ {} with stop {} tif={} (id={})",
             side,
             qty,
             symbol,
+            entry_desc,
             stop_price,
+            time_in_force,
             order.id,
         )
         return order
